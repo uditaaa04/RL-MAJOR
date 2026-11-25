@@ -65,3 +65,45 @@ def test_launcher_asks_first_and_only_then_kills(tmp_path):
         for p in (polite, other):
             if p.poll() is None:
                 p.kill()
+
+
+def test_opencv_install_never_compiles_and_has_a_second_try(monkeypatch):
+    """A very new Python: OpenCV's package may ask for a numpy that does not exist for it. The launcher must not
+    start compiling, and must try once more with OpenCV alone before it gives up."""
+    sys.path.insert(0, ROOT)
+    from tools import go
+    calls, works = [], {"after": None}
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return 0 if works["after"] is not None and len(calls) >= works["after"] else 1
+
+    class Stopped(Exception):
+        pass
+
+    def fake_stop(msg):
+        raise Stopped(msg)
+
+    monkeypatch.setattr(go, "run", fake_run)
+    monkeypatch.setattr(go, "stop", fake_stop)
+    monkeypatch.setattr(go, "say", lambda *a: None)
+    # 1. OpenCV already works: nothing is installed
+    monkeypatch.setattr(go, "have_cv2", lambda: True)
+    go.ensure_cv2()
+    assert calls == []
+    # 2. the normal install fails, OpenCV alone works
+    works["after"] = 2
+    monkeypatch.setattr(go, "have_cv2", lambda: len(calls) >= 2)
+    go.ensure_cv2()
+    assert len(calls) == 2 and all("--only-binary=:all:" in c for c in calls)
+    assert "--no-deps" not in calls[0] and "--no-deps" in calls[1]
+    # 3. both fail: a clear stop, no third try
+    calls.clear()
+    works["after"] = None
+    monkeypatch.setattr(go, "have_cv2", lambda: False)
+    try:
+        go.ensure_cv2()
+        raise AssertionError("should have stopped")
+    except Stopped as e:
+        assert "OpenCV could not be installed" in str(e)
+    assert len(calls) == 2

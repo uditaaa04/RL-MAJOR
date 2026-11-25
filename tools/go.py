@@ -479,12 +479,28 @@ def mode_demo():
     hold(base, procs)
 
 
+def have_cv2():
+    """True when OpenCV works in the project's Python AND the packages it shares with the models still do."""
+    return subprocess.call([PY, "-c", "import numpy, onnxruntime, cv2; cv2.VideoCapture"], cwd=ROOT,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+
 def ensure_cv2():
     """OpenCV reads the webcam. It is installed the first time a step needs the camera."""
-    if subprocess.call([PY, "-c", "import cv2"], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-        say("Installing OpenCV for the webcam (once, needs the Internet) ...")
-        if run([PY, "-m", "pip", "install", "--disable-pip-version-check", "opencv-python-headless"]) != 0:
-            stop("OpenCV could not be installed (Internet?)")
+    if have_cv2():
+        return
+    say("Installing OpenCV for the webcam (once, needs the Internet) ...")
+    # ready-made packages only: nothing is ever compiled on this PC
+    pip = [PY, "-m", "pip", "install", "--disable-pip-version-check", "--only-binary=:all:"]
+    if run(pip + ["opencv-python-headless"]) == 0 and have_cv2():
+        return
+    # On a very new Python, OpenCV's package can ask for an older numpy than exists for that Python. numpy is
+    # already installed here and OpenCV works with it, so install OpenCV alone and leave the rest untouched.
+    say("Trying again without touching the other packages ...")
+    if run(pip + ["--no-deps", "opencv-python-headless"]) == 0 and have_cv2():
+        return
+    stop("OpenCV could not be installed. Check the Internet connection and run this again. If it still fails, "
+         f"this Python ({sys.version.split()[0]}) may be too new for OpenCV: send the log file named below.")
 
 
 def mode_camera():
