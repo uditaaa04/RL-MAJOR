@@ -82,11 +82,36 @@ def attach_photos(cfg: dict, reward: RewardModel, table=None):
     return reward
 
 
-def make_sim(params, reward, rng, split: str = "test"):
-    """split: which photos the boxes are: "val" while training and tuning, "test" when judging."""
+def make_sim(params, reward, rng, split: str = "test", photos=None, spot_rate: float = 0.0):
+    """split: which photos the boxes are: "val" while training and tuning, "test" when judging.
+    photos = use this photo set instead (e.g. a re-drawn test set). spot_rate = share of boxes spot-checked.
+    The harder photo sets (reward.photo_shift, from tools/shift_scores.py) are attached with the same split."""
     table = getattr(reward, "photos", None)
-    photos = None if table is None else (table.val if split == "val" else table.test)
-    return ConveyorSim(params, reward, rng, photos, getattr(reward, "gw_fit_limit", 1.0))
+    if photos is None:
+        photos = None if table is None else (table.val if split == "val" else table.test)
+    sim = ConveyorSim(params, reward, rng, photos, getattr(reward, "gw_fit_limit", 1.0))
+    sim.photo_sets = {k: (t.val if split == "val" else t.test) for k, t in (getattr(reward, "photo_shift", None) or {}).items()}
+    sim.spot_rate = float(spot_rate)
+    return sim
+
+
+def load_shift_tables(cfg: dict, reward: RewardModel) -> dict:
+    """The same photos made harder (darker, blurred): models/photo_scores_<name>.npz, read with the cut-offs
+    and confidence borders of the normal photos (nobody re-tuned anything when the photos changed)."""
+    from common.cascade import PhotoTable
+    clean = getattr(reward, "photos", None)
+    base = project_path(cfg["models"].get("photo_scores", "models/photo_scores.npz"))
+    out = {}
+    if clean is None:
+        return out
+    for name in ("blur", "dim", "both"):
+        path = base[:-4] + f"_{name}.npz"
+        if os.path.exists(path):
+            t = PhotoTable.load(path, like=clean)
+            if len(t.val) == len(clean.val) and len(t.test) == len(clean.test):
+                out[name] = t
+    reward.photo_shift = out
+    return out
 
 
 def rule_defaults(params: SimParams):

@@ -84,6 +84,13 @@ class PhotoSplit:
         ids = self.idx[1 if damaged else 0]
         return int(ids[int(rng.integers(len(ids)))])
 
+    def resample(self, rng) -> "PhotoSplit":
+        """A new set of the same size, drawn from this one with repeats (damaged and good separately).
+        Repeating an experiment on many such sets shows how much a result depends on WHICH photos
+        happened to be in the test set (the bootstrap)."""
+        take = np.concatenate([rng.choice(self.idx[1], len(self.idx[1])), rng.choice(self.idx[0], len(self.idx[0]))])
+        return PhotoSplit(self.y[take], {k: v[take] for k, v in self.p.items()}, self.thr, self.edges)
+
     def stats(self) -> dict:
         """Per confidence level: how many damaged / good photos, and how many each model gets wrong."""
         lv = []
@@ -152,14 +159,94 @@ class PhotoTable:
         os.replace(tmp, path)
 
     @staticmethod
-    def load(path: str) -> "PhotoTable":
+    def load(path: str, like: "PhotoTable | None" = None) -> "PhotoTable":
+        """like = another table whose cut-offs and confidence borders are used instead of this file's own
+        (for photos that changed AFTER everything was tuned: nobody re-tuned anything)."""
         z = np.load(path, allow_pickle=False)
         roles = [r for r in ROLES if f"val_{r}" in z.files and f"test_{r}" in z.files]
         thr = {r: float(z["thr_" + r]) for r in roles}
         meta = json.loads(str(z["meta"])) if "meta" in z.files else {}
-        val = PhotoSplit(z["val_y"], {r: z[f"val_{r}"] for r in roles}, thr)
+        if like is not None:
+            thr = {r: like.val.thr.get(r, thr[r]) for r in roles}
+        val = PhotoSplit(z["val_y"], {r: z[f"val_{r}"] for r in roles}, thr, None if like is None else like.val.edges)
         test = PhotoSplit(z["test_y"], {r: z[f"test_{r}"] for r in roles}, thr, val.edges)
         return PhotoTable(val, test, meta.get("source", "real photos"))
+
+
+class LiveGain:
+    """What a cloud answer is worth at each confidence level, measured again ON THE LINE from spot checks.
+
+    Plain words
+    -----------
+    The model card says "on an unsure box a cloud answer saves 1.2 on average". That number comes from the
+    validation photos. A real line drifts away from them: a lamp fails, the belt runs faster and the photo
+    smears, a new kind of box arrives. Then the card is wrong, and nothing in the photos themselves says so.
+
+    A SPOT CHECK is a box whose true state became known afterwards (a person looked at it, or the test run
+    knows the order of the boxes). If that box had both verdicts, the gateway's and an on-time cloud answer,
+    the saving of that one cloud call is known exactly:
+
+        saving = cost of the gateway's verdict - cost of the cloud's verdict      (0 when they agree)
+
+    This class keeps the running average of that saving per confidence level. It starts at the card's value
+    (the card counts as `prior_n` boxes) and moves to what the line shows as checked boxes come in.
+    Old boxes fade (half of their weight after `half_life` checked boxes of that level), so the numbers
+    keep following the line. The agent adds  (measured saving - card saving)  to the value of asking.
+    """
+
+    def __init__(self, card_gain, prior_n: float = 60.0, half_life: float = 300.0):
+        self.card = [float(x) for x in card_gain]            # index = confidence level; [0] is not used
+        self.prior_n = float(prior_n)
+        self.decay = 0.5 ** (1.0 / float(half_life)) if half_life and half_life > 0 else 1.0
+        self.n = [0.0] * len(self.card)                      # faded number of checked boxes per level
+        self.s = [0.0] * len(self.card)                      # faded sum of their savings
+        self.seen = [0] * len(self.card)                     # plain count (for the dashboard)
+        self.on_time = 1.0                                   # share of recent cloud calls answered in time
+
+    def note_call(self, answered_in_time: bool):
+        self.on_time += 0.05 * ((1.0 if answered_in_time else 0.0) - self.on_time)
+
+    def update(self, conf: int, saving: float):
+        c = int(conf)
+        if 1 <= c < len(self.card):
+            self.n[c] = self.n[c] * self.decay + 1.0
+            self.s[c] = self.s[c] * self.decay + float(saving)
+            self.seen[c] += 1
+
+    def gain(self, conf: int) -> float:
+        c = int(conf)
+        if not 1 <= c < len(self.card):
+            return 0.0
+        return (self.prior_n * self.card[c] + self.s[c]) / (self.prior_n + self.n[c])
+
+    def delta(self, conf: int) -> float:
+        """What to add to the value of 'ask the cloud' for a box of this confidence level."""
+        c = int(conf)
+        if not 1 <= c < len(self.card):
+            return 0.0
+        return (self.gain(c) - self.card[c]) * self.on_time
+
+    def table(self) -> list:
+        return [{"level": c, "name": CONF_NAMES[c], "card": round(self.card[c], 2), "live": round(self.gain(c), 2),
+                 "checked": int(self.seen[c])} for c in range(1, len(self.card))]
+
+    def state(self) -> dict:
+        return {"n": list(self.n), "s": list(self.s), "seen": list(self.seen), "on_time": self.on_time}
+
+    def restore(self, d: dict | None):
+        if d and len(d.get("n", [])) == len(self.card):
+            self.n, self.s = [float(x) for x in d["n"]], [float(x) for x in d["s"]]
+            self.seen = [int(x) for x in d.get("seen", self.seen)]
+            self.on_time = float(d.get("on_time", 1.0))
+
+
+def verdict_cost(verdict: int, damaged: bool, c_esc: float, c_fr: float) -> float:
+    """Cost of one verdict on one box whose true state is known."""
+    if damaged and not verdict:
+        return float(c_esc)
+    if (not damaged) and verdict:
+        return float(c_fr)
+    return 0.0
 
 
 def _inv_phi(p: float) -> float:

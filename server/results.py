@@ -69,6 +69,16 @@ def load_results(results_dir: str | None = None, card_path: str | None = None) -
     if e7:
         out["e7"] = [{k: r.get(k) for k in ("network", "cloud_calls_per_min", "policy", "reward_mean", "accuracy",
                                             "cloud_share", "miss_rate")} for r in e7]
+    e8 = _rows(os.path.join(res, "E8_photos_change.csv"))   # the photos get darker / blurred in the middle of a run
+    if e8:
+        out["e8"] = [{k: r.get(k) for k in ("photos", "cloud_calls_per_min", "policy", "cost_before", "cost_first_500",
+                                            "cost_last", "ask_share_last", "accuracy_last")} for r in e8]
+    sh = _json(os.path.join(res, "shift_scores.json"))      # how correct each model still is on the changed photos
+    if sh and sh.get("shifts"):
+        out["shift"] = {"clean": sh.get("clean"), "shifts": sh.get("shifts")}
+    e9 = _json(os.path.join(res, "E9_how_sure.json"))       # every gap with its range over re-drawn test sets
+    if e9 and e9.get("pairs"):
+        out["e9"] = e9
     cas = _json(os.path.join(res, "cascade.json"))          # real photos: what a cloud second opinion is worth
     if cas and cas.get("curve"):
         out["cascade"] = cas

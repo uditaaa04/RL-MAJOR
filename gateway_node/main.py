@@ -38,7 +38,18 @@ from common.policies import make_policy
 from common.rl import QAgent, RewardModel, StateSpace
 
 
-def build_policy(name, cfg, space, args):
+def make_live_gain(cfg, reward):
+    """The spot-check tally (what a cloud answer is worth, measured on this line). None when switched off
+    or when the model card has no confidence levels yet."""
+    from common.cascade import N_CONF, LiveGain
+    a = cfg["agent"]
+    if not a.get("spot_checks", True) or not reward.level.get("informative"):
+        return None
+    return LiveGain([0.0] + [reward.gain(c) for c in range(1, N_CONF)], float(a.get("spot_prior_n", 60)),
+                    float(a.get("spot_half_life", 300)))
+
+
+def build_policy(name, cfg, space, args, live=None):
     with open(project_path(cfg["agent"]["rule_params"])) as f:
         rp = json.load(f)
     if name != "qlearning":
@@ -58,7 +69,11 @@ def build_policy(name, cfg, space, args):
     if args.no_learn:
         cfg["agent"]["learn_online"] = False
     pol = make_policy("qlearning", cfg, agent=agent)
-    print(f"[main] Q-table loaded from {os.path.relpath(path)}  (online learning: {pol.learn})")
+    pol.live = live
+    if live is not None and path == online_path:
+        live.restore((agent.meta or {}).get("spot"))          # carry on with the tally of the last run
+    print(f"[main] Q-table loaded from {os.path.relpath(path)}  (online learning: {pol.learn}, "
+          f"spot checks: {'on' if live is not None else 'off'})")
     return pol, (agent, online_path)
 
 
@@ -193,18 +208,23 @@ def main():
     else:
         print("[main] NOTE: no confidence levels in the model card yet (run the photo-score step); "
               "every box counts as 'sure' until then")
-    policy, agent_info = build_policy(policy_name, cfg, space, args)
+    live_gain = make_live_gain(cfg, reward)
+    policy, agent_info = build_policy(policy_name, cfg, space, args, live_gain)
 
     def save_agent():
         if agent_info:
             ag, path = agent_info
-            ag.save(path, {"saved": time.strftime("%Y-%m-%d %H:%M:%S"), "online": True})
+            meta = {"saved": time.strftime("%Y-%m-%d %H:%M:%S"), "online": True}
+            if live_gain is not None:
+                meta["spot"] = live_gain.state()
+            ag.save(path, meta)
 
     # ---------------- ground truth (for accuracy numbers) ----------------
     truth_fn = None
     if args.mock:
         truth_fn = lambda box_id: hw.current[1]
-    elif args.sequence:
+    elif args.sequence or cfg["conveyor"].get("box_order_file"):
+        args.sequence = args.sequence or project_path(str(cfg["conveyor"]["box_order_file"]))
         with open(args.sequence) as f:
             seq = [ln.strip().split(",")[-1] for ln in f if ln.strip() and not ln.startswith("#")]
         seq = [s for s in seq if s in ("good", "damaged")]
@@ -239,8 +259,11 @@ def main():
             st["epsilon"] = ag.epsilon if getattr(pipe.policy, "explore", False) else 0.0
             st["learning"] = bool(getattr(pipe.policy, "learn", False))
             st["q_updates"] = int(getattr(pipe.policy, "updates", 0))
+            if getattr(pipe.policy, "live", None) is not None:
+                # what a cloud answer is worth per confidence level: model card vs measured on this line
+                st["gain_live"] = pipe.policy.live.table()
             if full_q and len(space.dims) >= 7:
-                # two small pictures of the learned table (the whole table has 8,640 rows: too big to send every
+                # two small pictures of the learned table (the whole table has 10,800 rows: too big to send every
                 # few seconds over a slow link)
                 with pipe.lock:
                     st["qmaps"] = ag.maps(space, getattr(pipe.policy, "last_state", None))
@@ -287,8 +310,9 @@ def main():
             try:
                 if pk == "qlearning" and agent_info:
                     newp = make_policy("qlearning", cfg, agent=agent_info[0])
+                    newp.live = live_gain
                 else:
-                    newp, _ = build_policy(pk, cfg, space, args)
+                    newp, _ = build_policy(pk, cfg, space, args, live_gain)
                 with pipe.lock:
                     pipe.policy = newp
                 state["policy"] = pk

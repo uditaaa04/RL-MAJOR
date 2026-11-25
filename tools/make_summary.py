@@ -76,11 +76,22 @@ def build() -> tuple[str, str]:
     q_on = avg.get("Q-learning (online)")
     rules = avg[[p for p in avg.index if not p.startswith("Q-learning")]]
     n_s = e1["scenario"].nunique()
+    e9 = None
+    e9p = project_path("results/E9_how_sure.json")
+    if os.path.exists(e9p):
+        e9 = json.load(open(e9p, encoding="utf-8"))
     if q_on is not None and len(rules):
         d = q_on - rules.iloc[0]
-        verdict = (f"Q-learning (online) {q_on:.2f} against the best hand-written rule ({rules.index[0]}) {rules.iloc[0]:.2f}: "
-                   + ("**level**, no real difference." if abs(d) < 0.05 else
-                      f"**Q-learning ahead by {d:.2f}**: real, but small." if d > 0 else f"**the rule is ahead by {-d:.2f}**."))
+        pair = next((x for x in (e9 or {}).get("pairs", []) if x["a"] == "Q-learning (online)" and x["b"] == rules.index[0]), None)
+        if pair is not None:       # the gap with its range over re-drawn test sets: only then call it real or level
+            tail = (f"**Q-learning ahead by {d:.2f} on these photos; over {e9['reps']} re-drawn test sets the gap is "
+                    f"{-pair['diff']:.2f} (95% range {-pair['high']:+.2f} to {-pair['low']:+.2f}): "
+                    + ("a real gap.**" if pair["real"] else "level, within chance.**"))
+        else:
+            tail = ("**level**, no real difference." if abs(d) < 0.05 else
+                    f"**Q-learning ahead by {d:.2f}**: small; see E9 for whether it is real." if d > 0
+                    else f"**the rule is ahead by {-d:.2f}**.")
+        verdict = (f"Q-learning (online) {q_on:.2f} against the best hand-written rule ({rules.index[0]}) {rules.iloc[0]:.2f}: " + tail)
         if "Adaptive rule" in avg.index and rules.index[0] != "Adaptive rule":
             verdict += (f" Against the best rule that picks ONE place per box (Adaptive rule, {avg['Adaptive rule']:.2f}) "
                         f"Q-learning is ahead by {q_on - avg['Adaptive rule']:.2f}.")
@@ -125,7 +136,28 @@ def build() -> tuple[str, str]:
             for p in dict.fromkeys(g["policy"]))
         e7_md = ("**E7 — cost per box with fewer cloud calls allowed (good network, simulation, lower = better)**\n\n"
                  + hdr + "\n|---" * (len(buds) + 1) + "|\n" + body)
-    parts = [x for x in (trade, casc, vis, e1_md, e7_md, e2_md) if x]
+    e9_md = ""
+    if e9:
+        e9_md = (f"**E9 — which gaps are real** (the comparison repeated on {e9['reps']} re-drawn test sets; a gap is real "
+                 "only when its 95% range does not cross zero)\n\n"
+                 "| Cost per box, first minus second | Gap | 95% range | Verdict |\n|---|---|---|---|\n"
+                 + "\n".join(f"| {x['a']} vs {x['b']} | {x['diff']:+.2f} | {x['low']:+.2f} to {x['high']:+.2f} | "
+                             f"{'real gap' if x['real'] else 'level, within chance'} |" for x in e9["pairs"]))
+    e8_md = ""
+    e8p = project_path("results/E8_photos_change.csv")
+    if os.path.exists(e8p):
+        e8 = pd.read_csv(e8p)
+        names = {"blur": "blurred", "dim": "darker", "both": "darker + blurred"}
+        cols = [(sh, b) for sh in dict.fromkeys(e8["photos"]) for b in dict.fromkeys(e8["cloud_calls_per_min"])]
+        hdr = "| Policy | " + " | ".join(f"{names.get(sh, sh)}, " + ("no limit" if b == 0 else f"{int(b)}/min") for sh, b in cols) + " |"
+        body = "\n".join("| " + p + " | " + " | ".join(
+            f"{float(e8[(e8['policy'] == p) & (e8['photos'] == sh) & (e8['cloud_calls_per_min'] == b)]['cost_last'].iloc[0]):.2f}"
+            for sh, b in cols) + " |" for p in dict.fromkeys(e8["policy"]))
+        e8_md = ("**E8 — the photos get worse in the middle of a run (simulation; cost per box 2001-3500 boxes after the "
+                 "change, lower = better)**\n\nThe same real test photos, made darker / blurred by software and scored "
+                 "again by the same models. Nothing is re-tuned. Only the \"spot checks\" rows learn the true state of "
+                 "boxes afterwards.\n\n" + hdr + "\n|---" * (len(cols) + 1) + "|\n" + body)
+    parts = [x for x in (trade, casc, vis, e1_md, e9_md, e7_md, e8_md, e2_md) if x]
     readme = "\n\n".join(parts + [head, "Full tables: [results/TRADEOFF.md](results/TRADEOFF.md), "
                                           "[results/SIM_RESULTS.md](results/SIM_RESULTS.md)"])
     overview = "\n\n".join(parts + [e5_md, head])

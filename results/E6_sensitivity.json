@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-25 23:53",
+ "generated": "2026-11-26 01:13",
  "auc": {
   "esp32": 0.7231740833869365,
   "gateway": 0.9674989766680311,
@@ -36,15 +36,15 @@
    "reward_gateway_on_time": -0.6657072685807848,
    "reward_cloud_on_time": -0.38600900532132626,
    "reward_missed": -6.0,
-   "seconds": 147,
+   "seconds": 129,
    "best_policy": "Q-learning (frozen)",
-   "best_reward": -0.5634631744650898,
-   "q_online_reward": -0.5732218018171356,
+   "best_reward": -0.5793914897503378,
+   "q_online_reward": -0.5839441652732831,
    "q_online_miss": 9.999999999999786e-05,
    "best_rule": "Confidence rule",
    "best_rule_reward": -0.6105068744211785,
    "best_rule_miss": 0.0,
-   "q_minus_best_rule": 0.0372850726040429
+   "q_minus_best_rule": 0.02656270914789538
   },
   {
    "setting": "5% damaged",
@@ -74,15 +74,15 @@
    "reward_gateway_on_time": -1.1504941231506929,
    "reward_cloud_on_time": -0.6886147008946844,
    "reward_missed": -10.0,
-   "seconds": 150,
-   "best_policy": "Confidence rule",
-   "best_reward": -1.312605863134663,
-   "q_online_reward": -1.33083894984798,
-   "q_online_miss": 0.0005749999999999977,
+   "seconds": 130,
+   "best_policy": "Q-learning (frozen)",
+   "best_reward": -1.310724959028499,
+   "q_online_reward": -1.3264771189058029,
+   "q_online_miss": 0.0005749999999999988,
    "best_rule": "Confidence rule",
    "best_rule_reward": -1.312605863134663,
    "best_rule_miss": 0.0,
-   "q_minus_best_rule": -0.018233086713316915
+   "q_minus_best_rule": -0.01387125577113979
   },
   {
    "setting": "30% damaged (base)",
@@ -112,15 +112,15 @@
    "reward_gateway_on_time": -2.517724109701188,
    "reward_cloud_on_time": -1.2305362259516972,
    "reward_missed": -35.0,
-   "seconds": 147,
+   "seconds": 129,
    "best_policy": "Q-learning (frozen)",
-   "best_reward": -2.526280160168118,
-   "q_online_reward": -2.581065710540525,
+   "best_reward": -2.549976240225246,
+   "q_online_reward": -2.577644510822499,
    "q_online_miss": 9.999999999999786e-05,
    "best_rule": "Confidence rule + reserve",
    "best_rule_reward": -2.7188227213946323,
    "best_rule_miss": 0.0,
-   "q_minus_best_rule": 0.13775701085410752
+   "q_minus_best_rule": 0.14117821057213353
   },
   {
    "setting": "base, wasted good box costs 3x",
@@ -150,15 +150,15 @@
    "reward_gateway_on_time": -4.121408104789191,
    "reward_cloud_on_time": -1.9736389684813735,
    "reward_missed": -35.0,
-   "seconds": 149,
+   "seconds": 130,
    "best_policy": "Q-learning (online)",
-   "best_reward": -4.852199170932129,
-   "q_online_reward": -4.852199170932129,
-   "q_online_miss": 0.0027749999999999997,
+   "best_reward": -4.841509602207862,
+   "q_online_reward": -4.841509602207862,
+   "q_online_miss": 0.002174999999999999,
    "best_rule": "Confidence rule + reserve",
    "best_rule_reward": -4.885837474571709,
    "best_rule_miss": 0.0034000000000000007,
-   "q_minus_best_rule": 0.03363830363957998
+   "q_minus_best_rule": 0.04432787236384694
   },
   {
    "setting": "base, escaped defect costs 3x",
@@ -188,15 +188,15 @@
    "reward_gateway_on_time": -4.4945558739255045,
    "reward_cloud_on_time": -2.605894392140806,
    "reward_missed": -95.0,
-   "seconds": 146,
+   "seconds": 104,
    "best_policy": "Q-learning (frozen)",
-   "best_reward": -4.108688703504172,
-   "q_online_reward": -4.126787118968781,
+   "best_reward": -4.195158182923755,
+   "q_online_reward": -4.226201291793333,
    "q_online_miss": 0.0,
    "best_rule": "Confidence rule + reserve",
    "best_rule_reward": -4.4116634899953615,
    "best_rule_miss": 0.0,
-   "q_minus_best_rule": 0.2848763710265807
+   "q_minus_best_rule": 0.18546219820202836
   }
  ],
  "rows": [
@@ -324,11 +324,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (frozen)",
-   "reward_mean": -0.5634631744650898,
+   "reward_mean": -0.5793914897503378,
    "miss_rate": 0.0,
-   "escape_rate": 0.12216666666666665,
-   "false_reject_rate": 0.03366516543990046,
-   "cloud_share": 0.09352500000000001
+   "escape_rate": 0.11966666666666664,
+   "false_reject_rate": 0.035106038821820576,
+   "cloud_share": 0.15645
   },
   {
    "setting": "1% damaged",
@@ -337,11 +337,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (online)",
-   "reward_mean": -0.5732218018171356,
+   "reward_mean": -0.5839441652732831,
    "miss_rate": 9.999999999999786e-05,
    "escape_rate": 0.11966666666666664,
-   "false_reject_rate": 0.03444972180141642,
-   "cloud_share": 0.13275000000000003
+   "false_reject_rate": 0.035154838309566824,
+   "cloud_share": 0.177275
   },
   {
    "setting": "5% damaged",
@@ -467,11 +467,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (frozen)",
-   "reward_mean": -1.339380780429867,
+   "reward_mean": -1.310724959028499,
    "miss_rate": 0.0,
-   "escape_rate": 0.13620296665576986,
-   "false_reject_rate": 0.05773116863690645,
-   "cloud_share": 0.198775
+   "escape_rate": 0.13152239417714248,
+   "false_reject_rate": 0.057683298776557874,
+   "cloud_share": 0.21290000000000003
   },
   {
    "setting": "5% damaged",
@@ -480,11 +480,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (online)",
-   "reward_mean": -1.33083894984798,
-   "miss_rate": 0.0005749999999999977,
-   "escape_rate": 0.1310175834844027,
-   "false_reject_rate": 0.05853425820579007,
-   "cloud_share": 0.222875
+   "reward_mean": -1.3264771189058029,
+   "miss_rate": 0.0005749999999999988,
+   "escape_rate": 0.13110384533468056,
+   "false_reject_rate": 0.0585298029590867,
+   "cloud_share": 0.22672499999999998
   },
   {
    "setting": "30% damaged (base)",
@@ -610,11 +610,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (frozen)",
-   "reward_mean": -2.526280160168118,
+   "reward_mean": -2.549976240225246,
    "miss_rate": 0.0,
-   "escape_rate": 0.031651329167406664,
-   "false_reject_rate": 0.21321777220233504,
-   "cloud_share": 0.21130000000000002
+   "escape_rate": 0.03216228108008868,
+   "false_reject_rate": 0.21580370151300513,
+   "cloud_share": 0.16192499999999999
   },
   {
    "setting": "30% damaged (base)",
@@ -623,11 +623,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (online)",
-   "reward_mean": -2.581065710540525,
+   "reward_mean": -2.577644510822499,
    "miss_rate": 9.999999999999786e-05,
-   "escape_rate": 0.033561245948532596,
-   "false_reject_rate": 0.21306160984552672,
-   "cloud_share": 0.21302500000000002
+   "escape_rate": 0.03277229879086699,
+   "false_reject_rate": 0.21653953895790978,
+   "cloud_share": 0.1771
   },
   {
    "setting": "base, wasted good box costs 3x",
@@ -753,11 +753,11 @@
    "cost_false_reject": 30.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (frozen)",
-   "reward_mean": -4.866206657758486,
-   "miss_rate": 0.0034000000000000007,
-   "escape_rate": 0.06326572027045535,
-   "false_reject_rate": 0.13634483311881626,
-   "cloud_share": 0.21337499999999998
+   "reward_mean": -4.843253419808833,
+   "miss_rate": 0.0033750000000000004,
+   "escape_rate": 0.06245561390415919,
+   "false_reject_rate": 0.1364782913759952,
+   "cloud_share": 0.21414999999999998
   },
   {
    "setting": "base, wasted good box costs 3x",
@@ -766,11 +766,11 @@
    "cost_false_reject": 30.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (online)",
-   "reward_mean": -4.852199170932129,
-   "miss_rate": 0.0027749999999999997,
-   "escape_rate": 0.06299483063721159,
-   "false_reject_rate": 0.1362494808624752,
-   "cloud_share": 0.22157500000000005
+   "reward_mean": -4.841509602207862,
+   "miss_rate": 0.002174999999999999,
+   "escape_rate": 0.06182177351906512,
+   "false_reject_rate": 0.1376907786048485,
+   "cloud_share": 0.22217499999999993
   },
   {
    "setting": "base, escaped defect costs 3x",
@@ -896,11 +896,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (frozen)",
-   "reward_mean": -4.108688703504172,
+   "reward_mean": -4.195158182923755,
    "miss_rate": 0.0,
-   "escape_rate": 0.028691604176391095,
-   "false_reject_rate": 0.22237396886906893,
-   "cloud_share": 0.18637499999999999
+   "escape_rate": 0.029631552514679776,
+   "false_reject_rate": 0.22246800753767776,
+   "cloud_share": 0.2043
   },
   {
    "setting": "base, escaped defect costs 3x",
@@ -909,11 +909,11 @@
    "cost_false_reject": 10.0,
    "cost_unchecked": 5.0,
    "policy": "Q-learning (online)",
-   "reward_mean": -4.126787118968781,
+   "reward_mean": -4.226201291793333,
    "miss_rate": 0.0,
-   "escape_rate": 0.028885833813081872,
-   "false_reject_rate": 0.2215202674467345,
-   "cloud_share": 0.19662499999999994
+   "escape_rate": 0.02995515173123358,
+   "false_reject_rate": 0.2225855684514576,
+   "cloud_share": 0.206175
   }
  ]
 }

@@ -47,8 +47,9 @@ SETTINGS = [
 ]
 
 
-def model_scores(onnx_path: str, folder: str, limit: int = 0):
-    """P(damaged) of every image in folder/good and folder/damaged."""
+def model_scores(onnx_path: str, folder: str, limit: int = 0, transform=None):
+    """P(damaged) of every image in folder/good and folder/damaged.
+    transform = optional function photo -> photo (used to make the photos darker / blurred on purpose)."""
     from PIL import Image
     from common.vision_io import OnnxInspector
     m = OnnxInspector(onnx_path, threads=1, providers=["CPUExecutionProvider"])
@@ -59,13 +60,14 @@ def model_scores(onnx_path: str, folder: str, limit: int = 0):
         if limit:
             names = names[:limit]
         for f in names:
-            p, _, _ = m.predict(Image.open(os.path.join(d, f)).convert("RGB"))
+            im = Image.open(os.path.join(d, f)).convert("RGB")
+            p, _, _ = m.predict(transform(im) if transform else im)
             ys.append(label)
             ps.append(p)
     return np.asarray(ys), np.asarray(ps)
 
 
-def tiny_scores(path: str, folder: str):
+def tiny_scores(path: str, folder: str, transform=None):
     """P(damaged) from the ESP32's tiny model (same arithmetic as the firmware) for folder/good and folder/damaged."""
     from PIL import Image
     from common import tiny
@@ -76,6 +78,8 @@ def tiny_scores(path: str, folder: str):
         for f in sorted(x for x in os.listdir(d) if x.lower().endswith((".jpg", ".jpeg", ".png"))):
             with Image.open(os.path.join(d, f)) as im:
                 im = im.convert("RGB")
+                if transform:
+                    im = transform(im)
                 if im.size != (256, 256):
                     im = im.resize((256, 256), Image.BILINEAR)
                 ps.append(m.predict(im))

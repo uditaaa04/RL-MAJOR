@@ -9,6 +9,9 @@ E3  Pre-training value   : pre-trained agent vs agent learning from zero
 E4  Policy map           : what the trained agent decided, as a colour map
 E5  Simulator was wrong  : hardware slower than assumed, nothing re-tuned
 E7  Cloud-call budget    : the same line with no limit, 30, 15, 8 and 4 cloud calls a minute
+E8  The photos change    : after 500 boxes every photo gets darker / blurred (the same real photos, scored
+                           again by the same models). Who copes, and does the agent correct itself from spot checks?
+E9  How sure is a gap    : the comparison repeated on 200 re-drawn test sets -> a range for every difference
 
 Every simulated box is one REAL test photo (see common/cascade.py), and "reward" is minus the real
 cost of what happened to that box. All policies see the same boxes in the same order.
@@ -34,10 +37,11 @@ from dataclasses import replace as _replace
 
 from common.policies import (AdaptiveRule, AlwaysCloud, AlwaysEdge, AlwaysGateway, AskAlways, ConfidenceReserveRule,
                              ConfidenceRule, DeadlineRule, OraclePolicy, QPolicy, ThresholdRule)
+from common.cascade import N_CONF, LiveGain
 from common.rl import CLOUD, EDGE, GATEWAY, QAgent, StateSpace
 from .env import random_schedule, summarize
 from .scenarios import BUSY, CHANGES, GOOD, LOSSY, STALLS, STEADY
-from .train_q import build, make_sim
+from .train_q import build, load_shift_tables, make_sim
 
 COLORS = {
     "Always-Edge": "#d1d5db", "Always-Gateway": "#9ca3af", "Always-Cloud": "#6b7280", "Threshold rule": "#f59e0b",
@@ -45,7 +49,9 @@ COLORS = {
     "Ask the cloud always": "#fb7185", "Confidence rule": "#0f766e", "Confidence rule + reserve": "#115e59",
     "Best possible (knows the answers)": "#111827",
     "Q-learning (frozen)": "#86efac", "Q-learning (online)": "#16a34a", "Q-learning (from zero)": "#ef4444",
+    "Q-learning (online + spot checks)": "#1d4ed8", "Q-learning (online + 1 box in 5 checked)": "#60a5fa",
 }
+SHIFT_TITLES = {"blur": "blurred (box moving)", "dim": "darker (40 % light)", "both": "darker + blurred + noise"}
 FIG = project_path("results/figures")
 RES = project_path("results")
 
@@ -344,6 +350,135 @@ def e7_budget(plt, params, reward, facs, rp, seeds=20, boxes=400):
 
 
 # ----------------------------------------------------------------------------
+def spot_policy(cfg, reward, facs, name="Q-learning (online + spot checks)"):
+    """The online agent plus the spot-check tally (common.cascade.LiveGain)."""
+    card_gain = [0.0] + [reward.gain(c) for c in range(1, N_CONF)]
+    a = cfg["agent"]
+
+    def mk(seed):
+        pol = facs["Q-learning (online)"](seed)
+        pol.live = LiveGain(card_gain, float(a.get("spot_prior_n", 60)), float(a.get("spot_half_life", 300)))
+        pol.name = name
+        return pol
+    return mk
+
+
+def e8_photos_change(plt, cfg, params, reward, facs, rp, seeds=20, before=500, after=3000, win=300):
+    """Box 1-500: the normal photos. From box 501 on every photo is darker / blurred: the SAME real photos,
+    scored again by the SAME models (tools/shift_scores.py). Nothing is re-tuned. The policies were all
+    built on clean photos; only the two 'spot checks' lines get to see the true state of boxes afterwards
+    (every box, or 1 box in 5) and correct what they think a cloud answer is worth."""
+    shifts = [k for k in ("blur", "dim", "both") if k in (getattr(reward, "photo_shift", None) or {})]
+    if not shifts:
+        print("    (skipped: no models/photo_scores_blur.npz ... run  python -m tools.shift_scores  first)")
+        return None
+    bud = float((cfg.get("cloud_budget") or {}).get("per_min", 15) or 15)
+    pols = {k: (facs[k], 0.0) for k in ("Adaptive rule", "Ask the cloud always", "Confidence rule",
+                                        "Confidence rule + reserve", "Q-learning (frozen)", "Q-learning (online)")}
+    pols["Q-learning (online + spot checks)"] = (spot_policy(cfg, reward, facs), 1.0)
+    pols["Q-learning (online + 1 box in 5 checked)"] = (spot_policy(cfg, reward, facs, "Q-learning (online + 1 box in 5 checked)"), 0.2)
+    pols["Best possible (knows the answers)"] = (lambda s: OraclePolicy(**rp.get("confidence", rp["adaptive"])), 0.0)
+    n = before + after
+    half = after // 2
+    rows, curves = [], {}
+    for sh in shifts:
+        for b in (bud, 0.0):
+            base = _replace(GOOD, budget_per_min=b, budget_burst=5.0)
+            sched = [(0, base), (before, _replace(base, photos=sh, name=f"{base.name}+{sh}"))]
+            for name, (mk, spot) in pols.items():
+                cost = np.zeros(n)
+                agg = {"before": [], "first": [], "last": [], "ask_last": [], "acc_last": []}
+                for sd in range(seeds):
+                    log = make_sim(params, reward, np.random.default_rng(8000 + sd), spot_rate=spot).run(
+                        mk(sd), sched, n, log_conditions=False)
+                    cost += -np.asarray(log.reward)
+                    agg["before"].append(-summarize(log, 0, before)["reward_mean"])
+                    agg["first"].append(-summarize(log, before, before + 500)["reward_mean"])
+                    last = summarize(log, n - half, n)
+                    agg["last"].append(-last["reward_mean"])
+                    agg["ask_last"].append(last["ask_share"])
+                    agg["acc_last"].append(last["accuracy"])
+                curves[(sh, b, name)] = cost / seeds
+                rows.append({"photos": sh, "cloud_calls_per_min": b, "policy": name,
+                             "cost_before": float(np.mean(agg["before"])), "cost_first_500": float(np.mean(agg["first"])),
+                             "cost_last": float(np.mean(agg["last"])), "cost_last_std": float(np.std(agg["last"])),
+                             "ask_share_last": float(np.mean(agg["ask_last"])), "accuracy_last": float(np.mean(agg["acc_last"]))})
+    with open(os.path.join(RES, "E8_photos_change.csv"), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader(); w.writerows(rows)
+    show = ["Ask the cloud always", "Confidence rule", "Q-learning (frozen)", "Q-learning (online + spot checks)",
+            "Q-learning (online + 1 box in 5 checked)", "Best possible (knows the answers)"]
+    fig, axes = plt.subplots(len(shifts), 2, figsize=(11.5, 3.2 * len(shifts)), sharex=True, squeeze=False)
+    for i, sh in enumerate(shifts):
+        for j, b in enumerate((bud, 0.0)):
+            ax = axes[i, j]
+            for name in show:
+                ax.plot(np.arange(win - 1, n), rolling(curves[(sh, b, name)], win), color=COLORS.get(name, "#000"),
+                        lw=2.2 if name.endswith("spot checks)") else 1.3, ls="--" if name.startswith("Best") else "-", label=name)
+            ax.axvspan(before, n, color="#fee2e2", alpha=0.45, lw=0)
+            ax.grid(alpha=0.3)
+            ax.set_title(f"photos become {SHIFT_TITLES.get(sh, sh)}; " + ("no call limit" if b == 0 else f"{b:.0f} cloud calls a minute"),
+                         fontsize=9, fontweight="bold", loc="left")
+            if j == 0:
+                ax.set_ylabel(f"cost per box (rolling {win})")
+            if i == len(shifts) - 1:
+                ax.set_xlabel("box number (red = after the photos changed)")
+    hs, ls = axes[0, 0].get_legend_handles_labels()
+    fig.legend(hs, ls, loc="lower center", ncol=3, fontsize=8.5, frameon=False)
+    fig.tight_layout(rect=[0, 0.045 + 0.02 * (3 - min(3, len(shifts))), 1, 1])
+    fig.savefig(os.path.join(FIG, "E8_photos_change.png"), dpi=150)
+    plt.close(fig)
+    return rows
+
+
+E9_PAIRS = [("Q-learning (online)", "Adaptive rule"), ("Q-learning (online)", "Ask the cloud always"),
+            ("Q-learning (online)", "Confidence rule"), ("Q-learning (frozen)", "Confidence rule"),
+            ("Confidence rule", "Adaptive rule")]
+
+
+def e9_how_sure(params, reward, facs, cfg, reps=200, boxes=400):
+    """How much do the E1 gaps depend on WHICH 594 photos are in the test set?
+
+    The test set is re-drawn 200 times (same size, photos picked with repeats: the bootstrap). On each
+    re-drawn set every policy runs the 10 situations of E1 on the same boxes. The spread of a difference
+    over the 200 sets is its uncertainty: if the 95 % range of 'A minus B' does not contain 0, the gap is real
+    for photos like these; if it does, the two are level. The range also contains the simulator's own run-to-run noise,
+    so it is on the careful side."""
+    table = getattr(reward, "photos", None)
+    if table is None:
+        return None
+    conds = [with_budget(cfg, c) for c in STEADY + [LOSSY, STALLS]]
+    names = list(dict.fromkeys(n for pair in E9_PAIRS for n in pair))
+    cost = {n: np.zeros(reps) for n in names}
+    brng = np.random.default_rng(424242)
+    for b in range(reps):
+        photos = table.test.resample(brng)
+        for name in names:
+            tot = 0.0
+            for ci, c in enumerate(conds):
+                log = make_sim(params, reward, np.random.default_rng(20000 + 37 * b + ci), photos=photos).run(
+                    facs[name](b), [(0, c)], boxes, log_conditions=False)
+                tot += -float(np.mean(log.reward))
+            cost[name][b] = tot / len(conds)
+
+    def rng_of(x):
+        return float(np.mean(x)), float(np.percentile(x, 2.5)), float(np.percentile(x, 97.5))
+    out = {"generated": time.strftime("%Y-%m-%d %H:%M"), "reps": reps, "n_test": len(table.test), "situations": len(conds),
+           "policies": {}, "pairs": []}
+    for n in names:
+        m, lo, hi = rng_of(cost[n])
+        out["policies"][n] = {"cost": m, "low": lo, "high": hi}
+    for a, bb in E9_PAIRS:
+        d = cost[a] - cost[bb]
+        m, lo, hi = rng_of(d)
+        out["pairs"].append({"a": a, "b": bb, "diff": m, "low": lo, "high": hi, "a_cheaper_share": float((d < 0).mean()),
+                             "real": bool(hi < 0 or lo > 0)})
+    with open(os.path.join(RES, "E9_how_sure.json"), "w") as f:
+        json.dump(out, f, indent=1)
+    return out
+
+
+# ----------------------------------------------------------------------------
 REALITY_CHANGES = dict(gw_med_s=2.5, server_med_s=3.0, server_sigma=0.5, payload_kb=2.0,
                        fast_retx_prob=0.5, capture_med_s=1.4)
 
@@ -419,7 +554,7 @@ def e5_mismatch(plt, cfg, params, reward, agent, space, rp, seeds=20, boxes=2000
 
 
 # ----------------------------------------------------------------------------
-def write_markdown(e1, e2, e3, rp, reward, params, agent, e5=None, e7=None, cfg=None):
+def write_markdown(e1, e2, e3, rp, reward, params, agent, e5=None, e7=None, cfg=None, e8=None, e9=None):
     L = []
     L.append("# Simulation results (auto-generated by `python -m sim.experiments`)\n")
     L.append("> These are **simulated** results from the calibrated conveyor simulator. "
@@ -513,6 +648,44 @@ def write_markdown(e1, e2, e3, rp, reward, params, agent, e5=None, e7=None, cfg=
                          and r["policy"] == p_ and r["cloud_calls_per_min"] == b) for b in buds) + " |")
             L.append("")
         L.append("![E7](figures/E7_budget.png)\n")
+    if e8:
+        L.append("## E8 - The photos change (20 runs; box 1-500 normal photos, then 3000 boxes of changed photos)\n")
+        L.append("The same real test photos, made darker / blurred and scored again by the same three models "
+                 "(`tools/shift_scores.py`). Nothing is re-tuned when the change happens. Cost per box, lower is better. "
+                 "Only the two \"spot checks\" rows are told the true state of boxes afterwards (every box, or 1 box in 5); "
+                 "with it they re-measure what a cloud answer is worth. \"Last 1500\" = boxes 2001-3500, after they had "
+                 "time to correct themselves.\n")
+        for sh in dict.fromkeys(r["photos"] for r in e8):
+            for b in dict.fromkeys(r["cloud_calls_per_min"] for r in e8):
+                sub = [r for r in e8 if r["photos"] == sh and r["cloud_calls_per_min"] == b]
+                L.append(f"**Photos become {SHIFT_TITLES.get(sh, sh)}; " + ("no call limit" if b == 0 else f"{b:.0f} cloud calls a minute") + "**\n")
+                L.append("| policy | before the change | first 500 after | last 1500 | asked the cloud (last 1500) | correct verdicts (last 1500) |")
+                L.append("|---|---|---|---|---|---|")
+                real = [r for r in sub if not r["policy"].startswith("Best possible")]
+                best = min(r["cost_last"] for r in real)
+                for r in sub:
+                    c = ("**%.2f**" if (r in real and abs(r["cost_last"] - best) < 1e-9) else "%.2f") % r["cost_last"]
+                    L.append(f"| {r['policy']} | {r['cost_before']:.2f} | {r['cost_first_500']:.2f} | {c} | "
+                             f"{100*r['ask_share_last']:.0f}% | {100*r['accuracy_last']:.1f}% |")
+                L.append("")
+        L.append("![E8](figures/E8_photos_change.png)\n")
+    if e9:
+        L.append(f"## E9 - How sure are the gaps? ({e9['reps']} re-drawn test sets)\n")
+        L.append(f"The {e9['n_test']} test photos are one draw out of many possible ones. The whole E1 comparison "
+                 f"({e9['situations']} situations) was repeated on {e9['reps']} re-drawn test sets (same size, photos picked "
+                 "with repeats). \"Range\" is where 95 % of the results fall. A gap is called real only when its range "
+                 "does not contain 0.\n")
+        L.append("| comparison (cost per box, A minus B) | gap | 95 % range | A cheaper in | verdict |")
+        L.append("|---|---|---|---|---|")
+        for pr in e9["pairs"]:
+            L.append(f"| {pr['a']} vs {pr['b']} | {pr['diff']:+.2f} | {pr['low']:+.2f} to {pr['high']:+.2f} | "
+                     f"{100*pr['a_cheaper_share']:.0f}% of sets | {'real gap' if pr['real'] else 'level (within chance)'} |")
+        L.append("")
+        L.append("| policy | cost per box | 95 % range |")
+        L.append("|---|---|---|")
+        for n, v in e9["policies"].items():
+            L.append(f"| {n} | {v['cost']:.2f} | {v['low']:.2f} to {v['high']:.2f} |")
+        L.append("")
     L.append("## Baseline rule settings (tuned on the same random conditions as Q pre-training)\n")
     L.append("```json\n" + json.dumps({k: v for k, v in rp.items() if not k.startswith("_")}, indent=2) + "\n```\n")
     L.append("## Simulator parameters used\n")
@@ -526,6 +699,7 @@ def main():
     plt = setup()
     cfg = load_config()
     params, reward, space = build(cfg)
+    load_shift_tables(cfg, reward)              # the same photos made harder (only E8 uses them)
     agent = QAgent.load(project_path(cfg["agent"]["q_table"]))
     with open(project_path(cfg["agent"]["rule_params"])) as f:
         rp = json.load(f)
@@ -537,7 +711,9 @@ def main():
     print("E4 policy map ..."); e4_policy_map(plt, agent, space)
     print("E5 simulator vs reality mismatch ..."); e5 = e5_mismatch(plt, cfg, params, reward, agent, space, rp)
     print("E7 cloud-call budget ..."); e7 = e7_budget(plt, params, reward, facs, rp)
-    write_markdown(e1, e2, e3, rp, reward, params, agent, e5, e7, cfg)
+    print("E8 the photos change ..."); e8 = e8_photos_change(plt, cfg, params, reward, facs, rp)
+    print("E9 how sure are the gaps ..."); e9 = e9_how_sure(params, reward, facs, cfg)
+    write_markdown(e1, e2, e3, rp, reward, params, agent, e5, e7, cfg, e8, e9)
     print(f"done in {time.time()-t0:.0f}s -> results/SIM_RESULTS.md, results/figures/")
 
 

@@ -5,32 +5,54 @@ It talks to the gateway laptop over the **USB cable**. No Wi-Fi setup, no extra 
 
 ## 1. Wiring
 
-| Part | Part pin | ESP32 pin | Note |
+**The full build guide is in `docs/hardware/`**: `SmartConveyor_Hardware_Setup_Guide.pdf` (parts, 29 numbered
+wires, build order, checks before power) and `SmartConveyor_Circuit_Diagram.png` (light) / `_dark.png`.
+It was checked pin by pin against the firmware. This table is the short version.
+
+| Part | Part pin | Goes to | Note |
 |---|---|---|---|
-| IR sensor 1 (under the camera) | OUT | **GPIO 32** | |
-| | VCC | **3V3** | **Not 5V.** 5V on the OUT pin can damage the ESP32. |
+| IR sensor 1 (under the camera) | OUT | **GPIO 32** (D32) | |
+| | VCC | **3V3** | **Not 5 V.** 5 V on OUT can damage the ESP32. |
 | | GND | GND | |
-| IR sensor 2 (at the reject arm) | OUT | **GPIO 33** | |
-| | VCC | **3V3** | Not 5V. |
+| IR sensor 2 (at the reject arm) | OUT | **GPIO 33** (D33) | Optional, see below. |
+| | VCC | **3V3** | Not 5 V. |
 | | GND | GND | |
-| Reject arm servo (SG90) | signal (orange/yellow) | **GPIO 18** | |
-| | + (red) | 5V from a separate supply | Do not feed the servo from the ESP32 3V3 pin. |
+| Reject arm servo | signal (orange/yellow) | **GPIO 18** (D18) | |
+| | + (red) | **5.0 V from the buck converter** | Never from the ESP32. Set the buck to 5.0 V with a multimeter BEFORE the servo is connected. |
 | | - (brown/black) | GND | |
-| Motor driver L298N | ENA | **GPIO 25** | Pull the small ENA jumper off first. |
-| | IN1 | **GPIO 26** | |
-| | IN2 | **GPIO 27** | |
-| | OUT1, OUT2 | belt motor | Swap the two wires if the belt runs backwards. |
-| | +12V, GND | motor supply | 6 to 12 V, whatever the motor needs. |
-| Green LED (optional) | + through 220 ohm | GPIO 16 | Lights for a good box. |
-| Red LED (optional) | + through 220 ohm | GPIO 17 | Lights for a damaged box. |
+| Motor driver HW-039 (BTS7960) | RPWM | **GPIO 25** (D25) | Belt speed. The only motor wire on the ESP32. |
+| | VCC, R_EN, L_EN | **3V3** | 3V3, not 5 V: on 5 V the driver would not see the ESP32's 3.3 V as HIGH. |
+| | LPWM, GND | GND | Reverse input held off. |
+| | R_IS, L_IS | leave empty | |
+| | B+, B- | 12 V adapter +, - | Reversed + and - destroys the driver. |
+| | M+, M- | belt motor | Swap the two wires if the belt runs backwards. |
+| Green LED (optional) | + through 330 ohm | GPIO 16 (RX2) | Lights for a good box. 220 ohm to 1 kohm is fine. |
+| Red LED (optional) | + through 330 ohm | GPIO 17 (TX2) | Lights for a damaged box. |
 | ESP32 | USB | gateway laptop | Power and data. Use a data cable, not a charge-only cable. |
 
-**Join all grounds together**: ESP32 GND, L298N GND, servo supply GND, IR sensor GND. Without a common
-ground nothing works reliably.
+**Join all grounds together**: ESP32 GND, 12 V adapter -, buck OUT-, servo, IR sensors, HW-039 GND.
+
+GPIO 26 and 27 stay empty. The firmware still switches GPIO 26 on while the belt runs (that was the direction
+pin of the older L298N driver); with nothing wired there it does no harm. An L298N also still works:
+ENA to GPIO 25 (pull its jumper off), IN1 to GPIO 26, IN2 to GPIO 27.
+
+If the belt jerks for a moment when 12 V is switched on while the ESP32 is starting, add a 10 kohm resistor
+from GPIO 25 to GND. Most HW-039 boards already hold that input low by themselves.
 
 The blue LED on the board: steady = gateway connected, blinking = waiting for the gateway.
 
 Different pins? Change the `#define PIN_...` lines at the top of `esp32_node/esp32_node.ino` and upload again.
+
+### Only one IR sensor?
+
+Fit it under the camera (GPIO 32) and set `conveyor.arm_sensor: false` in `config/system.yaml`.
+The gateway then fires the reject arm **by time**: camera-to-arm distance divided by belt speed after the box
+was seen. Two numbers must then be right, because nothing else tells the gateway where the box is:
+
+- `conveyor.cam_to_arm_m`: measure it with a ruler (camera centre to the arm).
+- `conveyor.speed_mps_at_full`: time a box over a known distance at full speed.
+
+With two sensors the arm fires exactly when the box arrives, so two sensors are still the better build.
 
 ## 2. Flash the board (once)
 

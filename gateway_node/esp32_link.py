@@ -349,6 +349,8 @@ class Esp32Hardware:
     def __init__(self, cfg: dict, link: Esp32Link):
         self.cfg, self.link = cfg, link
         self.duty = float(cfg["conveyor"]["belt_duty"])
+        # False = there is no IR sensor at the reject arm; the gateway fires the arm by time instead
+        self.arm_sensor = bool(cfg["conveyor"].get("arm_sensor", True))
         self.hold_ms = int(cfg.get("esp32", {}).get("servo_hold_ms", 350))
         self.truth = None                  # real boxes: ground truth comes from an experiment sequence file
         self.on_cam = self.on_arm = None
@@ -361,6 +363,8 @@ class Esp32Hardware:
 
     def _event(self, tag: str, t: float):
         # each event gets its own short thread: taking the photo must never delay the arm
+        if tag != "C" and not self.arm_sensor:
+            return                         # nothing is wired to the arm-sensor pin: ignore whatever it reports
         fn = self.on_cam if tag == "C" else self.on_arm
         if fn is not None:
             threading.Thread(target=fn, daemon=True, name=f"ir-{tag}").start()

@@ -1,0 +1,80 @@
+{
+ "generated": "2026-11-26 01:07",
+ "reps": 200,
+ "n_test": 594,
+ "situations": 10,
+ "policies": {
+  "Q-learning (online)": {
+   "cost": 2.519355922371011,
+   "low": 1.9393760496305499,
+   "high": 3.2492209741938565
+  },
+  "Adaptive rule": {
+   "cost": 3.1016909012241864,
+   "low": 2.443674424338258,
+   "high": 3.8063819814742583
+  },
+  "Ask the cloud always": {
+   "cost": 2.8012246248365966,
+   "low": 2.2169677938419587,
+   "high": 3.4652119022866312
+  },
+  "Confidence rule": {
+   "cost": 2.6937684741667276,
+   "low": 2.097689085019271,
+   "high": 3.392419811208121
+  },
+  "Q-learning (frozen)": {
+   "cost": 2.4956783204783823,
+   "low": 1.908837151153127,
+   "high": 3.2285536589542563
+  }
+ },
+ "pairs": [
+  {
+   "a": "Q-learning (online)",
+   "b": "Adaptive rule",
+   "diff": -0.5823349788531758,
+   "low": -1.0021147470282912,
+   "high": -0.2569625364220179,
+   "a_cheaper_share": 1.0,
+   "real": true
+  },
+  {
+   "a": "Q-learning (online)",
+   "b": "Ask the cloud always",
+   "diff": -0.2818687024655858,
+   "low": -0.5707807092430073,
+   "high": -0.02475985136899259,
+   "a_cheaper_share": 0.985,
+   "real": true
+  },
+  {
+   "a": "Q-learning (online)",
+   "b": "Confidence rule",
+   "diff": -0.1744125517957164,
+   "low": -0.4152906553806621,
+   "high": 0.08499551344762314,
+   "a_cheaper_share": 0.91,
+   "real": false
+  },
+  {
+   "a": "Q-learning (frozen)",
+   "b": "Confidence rule",
+   "diff": -0.19809015368834493,
+   "low": -0.4787798908884723,
+   "high": 0.05024205852493578,
+   "a_cheaper_share": 0.95,
+   "real": false
+  },
+  {
+   "a": "Confidence rule",
+   "b": "Adaptive rule",
+   "diff": -0.40792242705745935,
+   "low": -0.6671954497809325,
+   "high": -0.15639781022675842,
+   "a_cheaper_share": 1.0,
+   "real": true
+  }
+ ]
+}

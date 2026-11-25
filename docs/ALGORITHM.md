@@ -33,7 +33,7 @@ weak answer, so "weak but in time" beats "perfect but late".
 Why the ESP32 has its own model: an ESP32 has about 0.3 MB of free memory. The gateway's model needs many
 megabytes, so it cannot run there. The tiny model fits in 24 to 47 kB.
 
-## 2. What the agent sees: the state (8,640 situations)
+## 2. What the agent sees: the state (10,800 situations)
 
 The gateway measures seven things and puts each into a few bins:
 
@@ -45,10 +45,10 @@ The gateway measures seven things and puts each into a few bins:
 | 4 | **Can the gateway's own model finish in time?** | (boxes waiting + 1) × the gateway model's measured time, divided by the time left. The gateway times its own model on every box and on a blank photo every 2 s when idle | 3: fits easily (<0.4) / tight / too slow (≥1.0) |
 | 5 | **Cloud queue** | requests already in flight | 2: 0 / 1+ |
 | 6 | **How sure the gateway's model is about this box** | distance of its score from the cut-off. The borders between the levels come from the validation photos: the least-sure 10 % are "very unsure", the next 15 % "unsure", the next 25 % "fairly sure", the rest "sure" | 5: not run / sure / fairly sure / unsure / very unsure |
-| 7 | **Cloud calls left right now** | the cloud-call budget (a bucket that refills at the allowed rate and holds up to 5 unused calls) | 4: none / 1 / 2 / 3 or more |
+| 7 | **Cloud calls left right now** | the cloud-call budget (a bucket that refills at the allowed rate and holds up to 5 unused calls) | 5: none / 1 / 2 / 3-4 / 5 or more. "5 or more" is also what the agent sees when there is no limit: a call spent now is then not missed later |
 
-8 × 3 × 3 × 3 × 2 × 5 × 4 = **8,640 states**, 3 actions. Many of them can never happen (for example "sure" together
-with "gateway's model did not run"); about 3,400 are visited in training.
+8 × 3 × 3 × 3 × 2 × 5 × 5 = **10,800 states**, 3 actions. Many of them can never happen (for example "sure" together
+with "gateway's model did not run"); about 3,700 are visited in training.
 
 Feature 6 is what makes the decision **per box**: two boxes that arrive in the same network conditions can
 get different decisions. Feature 7 is what makes it a real **sequence** problem: a call spent on this box is
@@ -98,6 +98,33 @@ In the **experiments** the score that is reported is not this expected cost but 
 happened to each box**, counted from the photo's true label: 100 if a damaged box was shipped, 10 if a good
 box was thrown away, 5 plus the damage if it passed unchecked.
 
+### Spot checks: the line corrects the model card
+
+The per-level numbers above come from the validation photos. A real line drifts away from them: a lamp fails,
+the belt runs faster and the photo smears, a new kind of box arrives. On such photos the cloud's model can lose
+more than the gateway's (measured: `results/shift_scores.json`), and then the card's "a cloud call is worth 1.2
+here" is simply wrong. Nothing in the photo itself says so.
+
+So whenever the **true state of a box becomes known afterwards** (a test run with a known box order, or a person
+checks some boxes by hand) and that box had **both verdicts**, the saving of that one cloud call is known exactly:
+
+```
+saving = cost of the gateway's verdict − cost of the cloud's verdict        (0 when they agree)
+```
+
+`common/cascade.py → LiveGain` keeps the running average of that saving per confidence level. It starts at the
+card's value (the card counts as 60 checked boxes, `agent.spot_prior_n`) and old boxes fade (half their weight
+after 300 newer ones, `agent.spot_half_life`). When the agent decides, it adds
+
+```
+(saving measured on this line − saving on the card) × (share of recent cloud calls answered in time)
+```
+
+to the value of "ask the cloud". The Q-table keeps what it learned about **timing and the price of a call**; what
+an **answer is worth** now comes from the line. Without any known truth the tally never moves and the agent
+behaves exactly as before. Other settings of the two numbers (30/200, 120/600) gave the same result on the
+validation photos.
+
 The same costs also choose each model's **decision cut-off** on the validation photos, so the vision side and
 the RL side optimise the same goal. Because a shipped defect costs ten times a wasted good box, every
 cut-off leans toward rejecting. For the weak ESP32 model this means: it catches almost every damaged box
@@ -114,7 +141,8 @@ Q(s, a)  ←  Q(s, a) + α · [ r + γ · max_a' Q(s', a') − Q(s, a) ]
   `s'` = the state when box *i+1* arrived (the next decision).
 * The reward of a box is known only when its answer arrives (or it passes the arm), so the update happens
   **as soon as both `r` and `s'` are known**, whichever comes last (`common/policies.py → QPolicy`).
-* `γ = 0.6`: the next box matters a little, because a choice changes the queues the next box will find.
+* `γ = 0.9`: the next boxes matter, because a cloud call spent now is missing for a harder box a few
+  seconds later, and a choice changes the queues the next box will find.
 * If the agent picks the ESP32 but the board is not ready, the gateway checks the box and the agent learns
   from what was really done.
 
@@ -174,14 +202,28 @@ has to choose its level, margin and reserve, and that it keeps adjusting them on
 
 What the agent learns about spending calls (good network, from the trained table):
 
-| Gateway's model is | no call left | 1 left | 2 left | 3 or more left |
-|---|---|---|---|---|
-| sure | keep | keep | keep | keep |
-| fairly sure | keep | keep | keep | ask |
-| unsure | keep | keep | ask | ask |
-| very unsure | keep | ask | ask | ask |
+| Gateway's model is | no call left | 1 left | 2 left | 3-4 left | 5 or more left |
+|---|---|---|---|---|---|
+| sure | keep | keep | keep | keep | keep |
+| fairly sure | keep | keep | keep | keep | ask |
+| unsure | keep | keep | ask | ask | ask |
+| very unsure | keep | ask | ask | ask | ask |
 
-Nobody wrote that staircase. It comes out of the rewards.
+Nobody wrote that staircase. It comes out of the rewards. "Sure" boxes are never sent: on the validation
+photos a cloud answer there is worth slightly less than nothing.
+
+### What the two newest experiments say (`results/SIM_RESULTS.md`, E8 and E9)
+
+* **E9, how sure the gaps are.** The whole comparison was repeated on 200 re-drawn test sets. The gap between
+  the second-opinion way and the best pick-one rule is real (its 95 % range does not cross zero). The gap between
+  Q-learning and the confidence rule is **not**: Q-learning is cheaper in about nine sets out of ten, but the
+  range crosses zero. Say "level, slightly ahead on average", never "better".
+* **E8, the photos get worse in the middle of a run.** On darker or blurred photos, asking the cloud for every
+  box becomes the most expensive choice, even with no call limit, and the agent trained on clean photos asks too
+  often as well. With spot checks it corrects itself within about a thousand boxes and ends level with the
+  confidence rule, which was already safe because it only asks for unsure boxes. With a tight call limit
+  nobody over-asks, so spot checks change little there. The darker / blurred photos are made by software from
+  the public photos; they stand in for a real change, they are not measurements from the belt.
 
 ## 7. The tiny model on the ESP32 (`vision/train_tiny.py`, `common/tiny.py`, `esp32_node/esp32_node.ino`)
 
@@ -199,8 +241,8 @@ Nobody wrote that staircase. It comes out of the rewards.
 
 ## 8. Why tabular Q-learning (and not DQN / PPO)?
 
-* The state is small (432 situations): a table is enough and converges with under a million simulated boxes
-  in a minute.
+* The state is small (10,800 situations, about a third of them ever reached): a table is enough and
+  converges with 2.4 million simulated boxes in about three minutes.
 * A table lookup takes microseconds and needs no GPU.
 * It is **explainable**: you can open the table and show *why* it chose a place (the dashboard's
   "What the agent has learned" panel and `results/figures/E4_policy_map.png`).

@@ -280,6 +280,7 @@
       <h2>What the agent has learned</h2>
       <p class="lead" id="qNote">Each cell is one situation. Cyan means ask the cloud, white means keep the gateway's verdict, striped the ESP32. The map is drawn for a box like the last one (how sure the gateway was, cloud calls left). The outlined cell is the last box.</p>
       <canvas id="cQ" height="262"></canvas>
+      <div id="spotBox"></div>
     </section>
 
     <section>
@@ -324,8 +325,8 @@
         <li><span><b>Can the gateway's own model finish in time</b> (its measured speed and queue against the time left)</span><span class="n">3 levels</span></li>
         <li><span><b>Photos already waiting</b> at the cloud</span><span class="n">2 levels</span></li>
         <li><span><b>How sure the gateway's model is</b> about this box</span><span class="n">5 levels</span></li>
-        <li><span><b>Cloud calls left</b> right now (none, 1, 2, 3 or more)</span><span class="n">4 levels</span></li>
-        <li><span>Together</span><span class="n">8,640 situations</span></li>
+        <li><span><b>Cloud calls left</b> right now (none, 1, 2, 3 to 4, 5 or more)</span><span class="n">5 levels</span></li>
+        <li><span>Together</span><span class="n">10,800 situations</span></li>
       </ul>
     </article>
     <article>
@@ -338,6 +339,7 @@
         <li><span>Electricity used</span><span class="n">1 per joule</span></li>
       </ul>
       <p style="margin-top:12px">For each situation it keeps three numbers: the score it expects from keeping the gateway's verdict, from asking the cloud, and from the ESP32. It picks the best one, sees what happened, and corrects the number. That is Q-learning. Cloud calls are limited, so a call spent on an easy box is missing for a hard one a few boxes later; the agent learns that too.</p>
+      <p style="margin-top:12px"><b>Spot checks.</b> What a cloud answer is worth was first measured on the training photos. A real line drifts away from those: a lamp fails, the belt runs faster and the photo smears. So whenever the true state of a box is known afterwards (a test run with a known box order, or a person checks some boxes), the agent compares the gateway's and the cloud's verdict on that box and keeps its own tally per confidence level. The tally replaces the old number. The map on the Live page shows both.</p>
     </article>
     <article>
       <h2>Why learn, instead of writing a rule</h2>
@@ -679,6 +681,7 @@ $("btnFs").onclick=()=>{const d=document;if(d.fullscreenElement)d.exitFullscreen
 const POL=["Q-learning (online)","Q-learning (frozen)","Confidence rule","Confidence rule + reserve","Ask the cloud always","Adaptive rule","Always-Gateway","Threshold rule","Deadline rule","Always-Cloud","Always-Edge"];
 const POLNAME={"Q-learning (online)":"Q-learning, learning live","Q-learning (frozen)":"Q-learning, frozen","Adaptive rule":"Adaptive rule",
   "Confidence rule":"Confidence rule","Confidence rule + reserve":"Confidence rule + reserve","Ask the cloud always":"Always ask the cloud too","Best possible (knows the answers)":"Best possible (knows the answers)",
+  "Q-learning (online + spot checks)":"Q-learning + spot checks (every box)","Q-learning (online + 1 box in 5 checked)":"Q-learning + spot checks (1 box in 5)",
   "Always-Gateway":"Always the gateway","Always-Edge":"Always the ESP32","Always-Cloud":"Always the cloud","Threshold rule":"Threshold rule","Deadline rule":"Deadline rule"};
 const SCN={"good":"good","busy":"busy","bad":"bad","fast+busy":"fast belt","gateway-busy":"gateway busy","gateway-overload":"gateway choked","bw-cap":"capped","server-slow":"server slow","lossy":"lossy","wifi-stalls":"stalls"};
 const isQ=p=>String(p).startsWith("Q-learning");
@@ -736,6 +739,29 @@ function renderResults(){
         const best=Math.max(...d.e7.filter(x=>x.network===n&&x.cloud_calls_per_min===b&&!String(x.policy).startsWith("Best possible")).map(x=>x.reward_mean));
         return `<td class="${r&&Math.abs(r.reward_mean-best)<1e-9?"best":""}">${r?f2(-r.reward_mean):"n/a"}</td>`}).join("")}</tr>`).join("")}</table></div>`).join("")}
       <p class="take">The policies that use the gateway's confidence need far fewer cloud calls for the same cost. Between the confidence rules and Q-learning the winner changes from column to column: treat them as level here.</p></section>`)}
+  if(d.e8&&d.e8.length){
+    const sh=[...new Set(d.e8.map(r=>r.photos))],bd=[...new Set(d.e8.map(r=>r.cloud_calls_per_min))],ps=[...new Set(d.e8.map(r=>r.policy))];
+    const SH={blur:"blurred (box moving)",dim:"darker (40% light)",both:"darker, blurred and noisy"},ss=d.shift||{},cl=ss.clean||{};
+    const cell=(p,k,b,f)=>{const r=d.e8.find(x=>x.photos===k&&x.policy===p&&x.cloud_calls_per_min===b);if(!r)return"<td>n/a</td>";
+      const best=Math.min(...d.e8.filter(x=>x.photos===k&&x.cloud_calls_per_min===b&&!String(x.policy).startsWith("Best possible")).map(x=>x[f]));
+      return `<td class="${Math.abs(r[f]-best)<1e-9&&!String(p).startsWith("Best possible")?"best":""}">${f2(r[f])}</td>`};
+    H.push(`<section><h2>When the photos get worse</h2>
+      <p class="lead">Simulated line. After 500 boxes every photo becomes darker or blurred: the same real test photos, changed on purpose and scored again by the same three models. Nothing is re-tuned. Cost per box over boxes 2001 to 3500 after the change, lower is better. Only the two "spot checks" rows are told the true state of boxes afterwards.</p>
+      ${ss.shifts?`<div class="scroll"><table class="mx" style="max-width:760px;margin-bottom:14px"><tr><th style="text-align:left">correct verdicts on the test photos</th><th>ESP32</th><th>gateway</th><th>cloud</th></tr>
+        <tr><td style="text-align:left">normal photos</td><td>${f1(100*cl.edge)}%</td><td>${f1(100*cl.gateway)}%</td><td>${f1(100*cl.cloud)}%</td></tr>
+        ${sh.filter(k=>ss.shifts[k]).map(k=>`<tr><td style="text-align:left">${SH[k]||k}</td><td>${f1(100*ss.shifts[k].edge)}%</td><td>${f1(100*ss.shifts[k].gateway)}%</td><td>${f1(100*ss.shifts[k].cloud)}%</td></tr>`).join("")}</table></div>`:""}
+      <div class="scroll"><table class="mx" style="max-width:1000px"><tr><th></th>${sh.map(k=>bd.map(b=>`<th>${SH[k]||k}<br>${+b===0?"no call limit":b+" calls a minute"}</th>`).join("")).join("")}</tr>
+      ${ps.map(p=>`<tr><td class="${isQ(p)?"q":""}">${POLNAME[p]||p}</td>${sh.map(k=>bd.map(b=>cell(p,k,b,"cost_last")).join("")).join("")}</tr>`).join("")}</table></div>
+      <p class="take alert">On harder photos the cloud's model loses more than the gateway's. Asking the cloud for every box then becomes the most expensive choice, even with no call limit. The agent trained on clean photos also asks too often.</p>
+      <p class="take">With spot checks the agent corrects itself and ends level with the confidence rule. That rule was already safe here because it only asks for unsure boxes. With a tight call limit nobody over-asks, so spot checks change little.</p>
+      <p class="note">The changes are made by software on public photos. They stand in for a real lamp failure or a faster belt; they are not measurements from this belt.</p></section>`)}
+  if(d.e9&&d.e9.pairs){
+    const e=d.e9;
+    H.push(`<section><h2>Which gaps are real</h2>
+      <p class="lead">The ${e.n_test} test photos are one draw out of many possible ones. The whole comparison (${e.situations} situations) was repeated on ${e.reps} re-drawn test sets of the same size. "Range" is where 95% of the results fall. A gap counts as real only when its range does not cross zero.</p>
+      <div class="scroll"><table class="mx" style="max-width:900px"><tr><th style="text-align:left">cost per box, first minus second</th><th>gap</th><th>95% range</th><th>first is cheaper in</th><th style="text-align:left">verdict</th></tr>
+      ${e.pairs.map(r=>`<tr><td style="text-align:left">${esc(POLNAME[r.a]||r.a)} against ${esc(POLNAME[r.b]||r.b)}</td><td>${(r.diff>0?"+":"")+f2(r.diff)}</td><td>${(r.low>0?"+":"")+f2(r.low)} to ${(r.high>0?"+":"")+f2(r.high)}</td><td>${Math.round(100*r.a_cheaper_share)}% of sets</td><td style="text-align:left" class="${r.real?"best":""}">${r.real?"real gap":"level, within chance"}</td></tr>`).join("")}</table></div>
+      <p class="note">The range also contains the simulator's own run-to-run noise, so it is on the careful side.</p></section>`)}
   if(d.e1){
     const by={};d.e1.forEach(r=>{(by[r.policy]=by[r.policy]||[]).push(r)});
     const avg=POL.filter(p=>by[p]).map(p=>[p,by[p].reduce((a,r)=>a+r.reward_mean,0)/by[p].length]).sort((a,b)=>b[1]-a[1]);
@@ -901,6 +927,14 @@ function drawQ(st,q,visits,lastState,maps){
   x.textAlign="center";for(let j=0;j<nc;j++)x.fillText("cloud "+Lb.cloud_ms[j],left+j*cw+cw/2,H-5);
   x.textAlign="left";
 }
+function drawSpot(st){
+  const g=st&&st.gain_live,el=$("spotBox");if(!el)return;
+  if(!g||!g.length){el.innerHTML="";return}
+  const n=g.reduce((a,r)=>a+(r.checked||0),0),sg=v=>(v>0?"+":"")+(+v).toFixed(2);
+  el.innerHTML=`<p class="lead" style="margin:14px 0 6px">What a cloud answer saves per call. "Training photos" is the number it started with. "This line" is measured from the ${n} boxes whose true state was known afterwards (spot checks).</p>
+    <div class="scroll"><table class="mx" style="max-width:560px"><tr><th style="text-align:left">gateway's model is</th><th>training photos</th><th>this line</th><th>boxes checked</th></tr>
+    ${g.slice().reverse().map(r=>`<tr><td style="text-align:left">${esc(r.name)}</td><td>${sg(r.card)}</td><td class="${r.checked?"q":""}">${r.checked?sg(r.live):"no box yet"}</td><td>${r.checked}</td></tr>`).join("")}</table></div>`;
+}
 function drawHeat(lc){
   const img=$("latestImg"),c=$("heatCanvas");
   if(!lc){return}
@@ -992,7 +1026,7 @@ function tick(){
     ingest(s.recent);why(s.recent&&s.recent.length?s.recent[0]:null);headline(s);
     if(view!=="live")return;
     drawDecisions(s.series||[]);drawNet(s.series||[]);renderFeed(s.recent||[]);
-    drawQ(st,s.q,s.visits,s.recent&&s.recent.length?s.recent[0].state:null,s.qmaps);drawHeat(s.last_cloud);
+    drawQ(st,s.q,s.visits,s.recent&&s.recent.length?s.recent[0].state:null,s.qmaps);drawHeat(s.last_cloud);drawSpot(st);
   }).catch(err=>{if(String(err&&err.message)==="401")return;
     setStat("stSrv","stSrvV","not reachable","alert");setStat("stPi","stPiV","unknown","")});
 }

@@ -23,6 +23,24 @@ def crop_roi(frame_rgb: np.ndarray, roi, out_size: int = 256) -> Image.Image:
     return Image.fromarray(crop).resize((out_size, out_size), Image.BILINEAR)
 
 
+def random_hard_photo(img: Image.Image, rnd) -> Image.Image:
+    """TRAINING ONLY: the same photo as on a worse day on the line: less light and / or a smear along the
+    belt (the box moved while the picture was taken). rnd = Python's `random` module or a random.Random.
+    Why: measured on the test photos, a model trained only on clean photos loses up to 20 points when the
+    photo gets darker and blurred (results/shift_scores.json). A webcam over a moving belt gives such photos."""
+    a = np.asarray(img, np.float32)
+    if rnd.random() < 0.6:                                   # less light: 35 % .. 100 %
+        a = a * rnd.uniform(0.35, 1.0)
+    if rnd.random() < 0.6:                                   # smear along x: 1 % .. 5 % of the width
+        k = int(round(a.shape[1] * rnd.uniform(0.01, 0.05))) | 1
+        if k >= 3:
+            pad = k // 2
+            b = np.pad(a, ((0, 0), (pad, pad), (0, 0)), mode="edge")
+            c = np.cumsum(np.concatenate([np.zeros((b.shape[0], 1, b.shape[2]), np.float32), b], axis=1), axis=1)
+            a = (c[:, k:] - c[:, :-k]) / k
+    return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+
+
 def to_jpeg(img: Image.Image, quality: int = 85) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)

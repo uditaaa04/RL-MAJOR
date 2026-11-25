@@ -31,7 +31,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 
-from common.cascade import CONF_NAMES, conf_level, margin
+from common.cascade import CONF_NAMES, conf_level, margin, verdict_cost
 from common.rl import ACTIONS, CLOUD, EDGE, GATEWAY, Obs, load_card
 from .budget import CloudBudget
 
@@ -69,6 +69,9 @@ class Pipeline:
         self.cam_to_arm = float(c["cam_to_arm_m"])
         self.guard = float(c["guard_s"])
         self.min_gap = float(c["min_box_gap_s"])
+        # no IR sensor at the reject arm (conveyor.arm_sensor: false): the arm is fired by TIME instead,
+        # camera-to-arm distance / belt speed after the box was seen under the camera
+        self.arm_by_time = not bool(getattr(hw, "arm_sensor", True))
         self.thr = float(cfg["models"]["damaged_threshold"])
         self.thr_by = {"EDGE": self.thr, "GATEWAY": self.thr, "CLOUD": self.thr}   # per-model cut-offs from the model card
         self.conf_edges = None              # borders of the confidence levels (from the validation photos)
@@ -85,6 +88,9 @@ class Pipeline:
             pass
         b = cfg.get("cloud_budget") or {}
         self.budget = CloudBudget(b.get("per_min", 0), b.get("burst", 5))
+        # spot checks: when the true state of a box is known (test run with a known box order, or a person
+        # looked), the agent measures on the line itself what a cloud answer was worth
+        self.spot_checks = bool(cfg["agent"].get("spot_checks", True))
         self.e = cfg["energy"]
         self.save_every = int(cfg["agent"]["save_every"])
         self.lock = threading.RLock()
@@ -115,9 +121,18 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def transit_estimate(self) -> float:
-        if self.transit is not None:
+        if self.transit is not None and not self.arm_by_time:
             return self.transit
         return self.cam_to_arm / max(0.02, self.hw.belt_speed_mps())
+
+    def _expect_at_arm(self, t0: float):
+        """Arm fired by time: this box 'reaches the arm' one transit time after the camera saw it."""
+        if not self.arm_by_time:
+            return
+        wait = max(0.0, t0 + self.transit_estimate() - time.perf_counter())
+        tm = threading.Timer(wait, self.on_box_at_arm)
+        tm.daemon = True
+        tm.start()
 
     def on_box_at_camera(self):
         t0 = time.perf_counter()
@@ -127,6 +142,7 @@ class Pipeline:
             self.last_seen = t0
             box_id = self.next_id
             self.next_id += 1
+        self._expect_at_arm(t0)
         try:
             img = self.cam.capture_box(t0)          # first frame taken after IR-1 fired
         except Exception as e:
@@ -278,8 +294,9 @@ class Pipeline:
             if box is None:
                 return
             box.at_arm = True
-            t = now - box.t_seen
-            self.transit = t if self.transit is None else 0.7 * self.transit + 0.3 * t
+            if not self.arm_by_time:                   # measured travel time (only a real sensor can measure it)
+                t = now - box.t_seen
+                self.transit = t if self.transit is None else 0.7 * self.transit + 0.3 * t
             if box.result is not None and box.t_result is not None and box.t_result <= now:
                 if box.extra.get("asked") and box.result.get("where") != "CLOUD" and not box.finalized:
                     box.extra["cloud_late"] = True     # cloud not back yet: the gateway's verdict is used
@@ -361,6 +378,15 @@ class Pipeline:
         lat = ((box.t_result if on_time and box.t_result else time.perf_counter()) - box.t_decide)
         box.extra.update(reward=rew, energy=energy, latency=lat)
         self.policy.outcome(box.box_id, box.action, on_time, lat, rew)
+        if box.extra.get("asked"):
+            self.policy.cloud_call(answered_by == CLOUD)
+            gw_res = box.extra.get("gw_result")
+            if (self.spot_checks and answered_by == CLOUD and gw_res is not None and box.truth in ("good", "damaged")):
+                dmg = box.truth == "damaged"
+                saving = (verdict_cost(self._verdict(gw_res) == "damaged", dmg, self.reward.c_esc, self.reward.c_fr)
+                          - verdict_cost(self._verdict(box.result) == "damaged", dmg, self.reward.c_esc, self.reward.c_fr))
+                self.policy.spot_check(conf, saving)
+                box.extra["spot_saving"] = saving
         st = self.stats
         st["n"] += 1
         st[("edge", "gateway", "cloud")[box.action]] += 1

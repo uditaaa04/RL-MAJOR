@@ -26,7 +26,7 @@ def obs(**kw):
 
 
 def test_state_space_size_and_range():
-    assert SPACE.n_states == 8 * 3 * 3 * 3 * 2 * 5 * 4          # + how sure the gateway is, + cloud calls left
+    assert SPACE.n_states == 8 * 3 * 3 * 3 * 2 * 5 * 5          # + how sure the gateway is, + cloud calls left
     for o in [obs(), obs(rtt_ms=900, budget_s=0.05, cloud_ms=2000, cpu=1.0, gw_q=5, cloud_q=3)]:
         assert 0 <= SPACE.index(o) < SPACE.n_states
 

@@ -43,11 +43,11 @@
 #define PIN_IR_CAMERA   32      // IR sensor 1 OUT  (box under the camera)
 #define PIN_IR_ARM      33      // IR sensor 2 OUT  (box at the reject arm)
 #define PIN_SERVO       18      // reject arm servo signal (orange / yellow wire)
-#define PIN_MOTOR_ENA   25      // L298N ENA  (belt speed, PWM)  - remove the ENA jumper on the L298N
-#define PIN_MOTOR_IN1   26      // L298N IN1
-#define PIN_MOTOR_IN2   27      // L298N IN2
-#define PIN_LED_GOOD    16      // optional green LED (+ 220 ohm resistor)
-#define PIN_LED_BAD     17      // optional red LED   (+ 220 ohm resistor)
+#define PIN_MOTOR_ENA   25      // belt speed, PWM: HW-039 (BTS7960) RPWM, or L298N ENA (pull its jumper off)
+#define PIN_MOTOR_IN1   26      // L298N IN1 only. With the HW-039 leave this pin empty (it still switches, harmless)
+#define PIN_MOTOR_IN2   27      // L298N IN2 only. With the HW-039 leave this pin empty
+#define PIN_LED_GOOD    16      // optional green LED (+ 220 to 1000 ohm resistor)
+#define PIN_LED_BAD     17      // optional red LED   (+ 220 to 1000 ohm resistor)
 #define PIN_LED_LINK     2      // blue LED on the board: ON = gateway connected
 
 #define BAUD            460800

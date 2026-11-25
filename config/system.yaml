@@ -80,6 +80,11 @@ camera:
 # ---------------- conveyor mechanics ----------------
 conveyor:
   cam_to_arm_m: 0.10       # distance camera centre -> reject arm   <-- MEASURE
+  arm_sensor: true         # false = only ONE IR sensor (under the camera): the arm is fired by time
+                           #         (distance / belt speed), so measure both numbers well
+  box_order_file: ""       # real belt only: a file that lists the boxes in the order you feed them (good / damaged),
+                           # e.g. experiments/sequences/seq_A.csv. With it the dashboard shows correct / wrong and
+                           # the agent can do its spot checks. Empty = the true state of boxes is not known.
   belt_duty: 0.6           # motor PWM duty 0..1 at start
   speed_mps_at_full: 0.30  # belt speed at duty 1.0                  <-- MEASURE (tools/calibrate.py)
   guard_s: 0.05            # safety margin: the arm needs this much time
@@ -97,6 +102,11 @@ agent:
   epsilon: 0.02            # exploration: try another place 2% of the time ...
   explore_gap: 3.0         # ... but only one whose value is this close to the best (safe exploration)
   forget: 0.02             # "bad memories fade": the unused option drifts back toward its pre-trained value
+  spot_checks: true        # when the true state of a box is known afterwards (test run with a known box order,
+                           # or a person looked), measure on the line what a cloud answer was worth and use that
+                           # instead of the model card's number (the card was made from other photos)
+  spot_prior_n: 60         # the model card counts as this many checked boxes per confidence level
+  spot_half_life: 300      # a checked box loses half its weight after this many newer ones (follows changes)
   # (alpha, epsilon, explore_gap were chosen on separate random validation runs - see docs/ALGORITHM.md)
   save_every: 25           # save the Q-table every N boxes
   rule_params: models/rule_params.json   # tuned thresholds for the baseline rules
@@ -109,7 +119,7 @@ cloud_budget:
   per_min: 15              # cloud calls allowed per minute (0 = no limit)
   burst: 5                 # unused calls that can be saved up
 
-# What the agent "sees" (state): 8 x 3 x 3 x 3 x 2 x 5 x 4 = 8,640 states, 3 choices each (ESP32 / gateway / cloud).
+# What the agent "sees" (state): 8 x 3 x 3 x 3 x 2 x 5 x 5 = 10,800 states, 3 choices each (ESP32 / gateway / cloud).
 state_bins:
   slack_ms: [-50, 0, 50, 100, 150, 250, 400]   # SPARE TIME if sent to the cloud (8 bins)
   cloud_ms: [150, 400]                         # measured cloud response: fast / slow / very slow
@@ -118,7 +128,7 @@ state_bins:
   gw_default_ms: 10                            # gateway model time assumed before the first measurement
   cloud_overhead_ms: 30                        # upload + cloud model time added to the ping (calibrated)
                                                # + cloud queue: 0 or 1+   (2 bins)
-  budget_calls: [1, 2, 3]                      # cloud calls left right now: none / 1 / 2 / 3 or more
+  budget_calls: [1, 2, 3, 5]                   # cloud calls left right now: none / 1 / 2 / 3-4 / 5 or more (= plenty, or no limit)
                                                # + how sure the gateway's model is about this box (5 levels;
                                                #   the level borders are learned from the validation photos)
 

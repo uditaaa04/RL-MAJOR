@@ -1,14 +1,14 @@
 {
   "Q-learning (online)": {
-    "reward_first_500": -2.6517485553711695,
-    "reward_last_500": -2.443182343635586,
-    "missed_first_500_%": 0.07333333333333333,
-    "missed_last_500_%": 0.2
+    "reward_first_500": -2.637728172726289,
+    "reward_last_500": -2.4766853240880193,
+    "missed_first_500_%": 0.12666666666666668,
+    "missed_last_500_%": 0.12666666666666665
   },
   "Q-learning (from zero)": {
-    "reward_first_500": -3.684241027392468,
-    "reward_last_500": -2.839715240453197,
-    "missed_first_500_%": 2.373333333333333,
+    "reward_first_500": -3.758920356005479,
+    "reward_last_500": -2.8491846406201375,
+    "missed_first_500_%": 2.4066666666666663,
     "missed_last_500_%": 0.48
   }
 }

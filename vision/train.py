@@ -56,6 +56,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import models
 
 from common.algos import cost_optimal_threshold
+from common.vision_io import random_hard_photo
 
 CLASSES =["good", "damaged"]           # index 0 = good, 1 = damaged
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)
@@ -132,7 +133,8 @@ def to_tensor(img: Image.Image) -> torch.Tensor:
 
 
 class BoxDS(Dataset):
-    def __init__(self, root, split, img, train: bool):
+    def __init__(self, root, split, img, train: bool, hard_aug: float = 0.0):
+        self.hard_aug = float(hard_aug)        # share of training photos made darker / smeared (see random_hard_photo)
         self.items = []
         for ci, c in enumerate(CLASSES):
             d = os.path.join(root, split, c)
@@ -168,6 +170,8 @@ class BoxDS(Dataset):
             img = ImageEnhance.Brightness(img).enhance(random.uniform(0.8, 1.2))
             img = ImageEnhance.Contrast(img).enhance(random.uniform(0.8, 1.2))
             img = ImageEnhance.Color(img).enhance(random.uniform(0.8, 1.2))
+            if self.hard_aug > 0 and random.random() < self.hard_aug:
+                img = random_hard_photo(img, random)
         img = img.resize((self.img, self.img), Image.BILINEAR)
         mask = mask.resize((self.img, self.img), Image.BILINEAR)
         m = torch.from_numpy(np.asarray(mask, np.float32)[None] / 255.0)
@@ -283,6 +287,9 @@ def main():
     ap.add_argument("--lr", type=float, default=None)
     ap.add_argument("--seg-weight", type=float, default=1.0, help="weight of the damage-map loss")
     ap.add_argument("--pos-weight", type=float, default=10.0, help="extra weight for (rare) damaged map cells")
+    ap.add_argument("--hard-aug", type=float, default=0.3,
+                    help="share of training photos made darker and / or smeared, so the model copes with a "
+                         "worse day on the line (0 = off, as before)")
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--max-train", type=int, default=0)
@@ -299,7 +306,7 @@ def main():
     lr = a.lr or (2e-3 if a.init == "scratch" else 5e-4)
     os.makedirs(a.out, exist_ok=True)
 
-    tr = BoxDS(a.data, "train", img, train=True)
+    tr = BoxDS(a.data, "train", img, train=True, hard_aug=a.hard_aug)
     if a.max_train:
         random.shuffle(tr.items); tr.items = tr.items[: a.max_train]
     va = BoxDS(a.data, "val", img, train=False)

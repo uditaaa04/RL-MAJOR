@@ -1,6 +1,6 @@
 # Second opinion: which boxes are worth a cloud call
 
-Generated 2026-11-25 23:37. 594 test photos (public), never used for training or for choosing the confidence levels (those come from the 588 validation photos). Costs assume 30% damaged boxes, 100 for a shipped damaged box and 10 for a wasted good one.
+Generated 2026-11-26 00:53. 594 test photos (public), never used for training or for choosing the confidence levels (those come from the 588 validation photos). Costs assume 30% damaged boxes, 100 for a shipped damaged box and 10 for a wasted good one.
 
 - The gateway's and the cloud's model give the same verdict on 89.7% of photos.
 - The cloud corrects the gateway on 7.9% and makes it worse on 2.4%. Both are wrong on 2.2%.

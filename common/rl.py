@@ -21,7 +21,7 @@ Second opinion (how the three are used together)
   Cloud calls are limited (so many per minute), so the agent has to spend them on the boxes that need them.
 
 State  : (spare time if sent to the cloud, cloud speed, ping, can the gateway finish in time, cloud queue,
-          how sure the gateway's model is about this box, how much of the cloud-call budget is left)
+          how sure the gateway's model is about this box, how many cloud calls are left right now)
 Reward : minus the expected cost of the box, given who answered and how sure the gateway was
          (escaped defect / false reject / box missed because no answer came in time), minus a little for energy.
 Update : Q(s,a) <- Q(s,a) + alpha * [ r + gamma * max_a' Q(s',a') - Q(s,a) ]
@@ -77,7 +77,7 @@ def load_card(path: str | None) -> dict:
 
 
 class StateSpace:
-    """State = 7 numbers, each cut into a few bins (8 x 3 x 3 x 3 x 2 x 5 x 4 = 8,640 states):
+    """State = 7 numbers, each cut into a few bins (8 x 3 x 3 x 3 x 2 x 5 x 5 = 10,800 states):
 
       slack    : SPARE TIME if this box is sent to the cloud =
                  time left before the arm - predicted cloud answer time
@@ -90,7 +90,8 @@ class StateSpace:
       cloud_q  : cloud requests already waiting (0 / 1+)                          2 bins
       conf     : how sure the gateway's model is about this box
                  (not run / sure / fairly sure / unsure / very unsure)            5 bins
-      budget   : cloud calls left right now (none / 1 / 2 / 3 or more)            4 bins
+      budget   : cloud calls left right now (none / 1 / 2 / 3-4 / 5 or more;
+                 "5 or more" also means "no limit": a call spent now is not missed later)    5 bins
 
     The agent learns for itself how much spare time is "safe enough" in each
     situation - that is exactly the safety margin a hand-made rule needs tuned.
@@ -104,7 +105,7 @@ class StateSpace:
         self.gw_edges = sorted(bins.get("gw_fit", [0.4, 1.0]))
         self.gw_default_ms = float(bins.get("gw_default_ms", 10.0))
         self.overhead_ms = float(bins.get("cloud_overhead_ms", 30.0))
-        self.budget_edges = sorted(bins.get("budget_calls", [1, 2, 3]))      # calls left: none / 1 / 2 / 3+
+        self.budget_edges = sorted(bins.get("budget_calls", [1, 2, 3, 5]))   # calls left: none / 1 / 2 / 3-4 / 5+
         self.dims = (len(self.slack_edges) + 1, len(self.cloud_edges) + 1, len(self.rtt_edges) + 1, 3, 2,
                      N_CONF, len(self.budget_edges) + 1)
         self.n_states = int(np.prod(self.dims))
@@ -160,7 +161,8 @@ class StateSpace:
             "gw_load": ["fits", "tight", "too slow"],
             "cloud_q": ["0", "1+"],
             "conf": list(CONF_NAMES),
-            "budget": ["none", "1", "2", "3 or more"][: len(self.budget_edges) + 1],
+            "budget": (["none", "1", "2", "3 or more"] if len(self.budget_edges) == 3 else
+                       ["none", "1", "2", "3-4", "5 or more"])[: len(self.budget_edges) + 1],
         }
 
 
@@ -277,9 +279,14 @@ class QAgent:
             self.q[:, EDGE] = gateway_value - cloud_handicap if edge_value is None else edge_value
         self.prefer = GATEWAY
 
-    def greedy(self, s: int, allowed=None) -> int:
-        """Best option in state s. allowed = the options open right now (None = all)."""
+    def greedy(self, s: int, allowed=None, cloud_bonus: float = 0.0) -> int:
+        """Best option in state s. allowed = the options open right now (None = all).
+        cloud_bonus = added to the value of CLOUD for this one decision (what the line's own spot checks
+        say a cloud answer is worth, minus what the model card said; 0 = use the table as it is)."""
         row = self.q[s]
+        if cloud_bonus:
+            row = row.copy()
+            row[CLOUD] += cloud_bonus
         if allowed is None:
             a = int(np.argmax(row))
         else:
@@ -289,16 +296,20 @@ class QAgent:
             return self.prefer
         return a
 
-    def act(self, s: int, explore: bool = True, allowed=None) -> int:
+    def act(self, s: int, explore: bool = True, allowed=None, cloud_bonus: float = 0.0) -> int:
         """epsilon-greedy with SAFE exploration: another option is only tried
         when its value is close to the best one (gap < explore_gap). If the
         agent is sure an option is bad, it does not gamble a real box on it."""
-        g = self.greedy(s, allowed)
+        g = self.greedy(s, allowed, cloud_bonus)
         if explore and self.rng.random() < self.epsilon:
             opts = list(range(self.q.shape[1])) if allowed is None else list(allowed)
             if self.explore_gap is None:
                 return opts[int(self.rng.integers(len(opts)))]
-            close = [a for a in opts if a != g and (self.q[s, g] - self.q[s, a]) < self.explore_gap]
+            row = self.q[s]
+            if cloud_bonus:
+                row = row.copy()
+                row[CLOUD] += cloud_bonus
+            close = [a for a in opts if a != g and (row[g] - row[a]) < self.explore_gap]
             if close:
                 return close[int(self.rng.integers(len(close)))]
         return g

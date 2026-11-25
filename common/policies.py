@@ -53,6 +53,12 @@ class Policy:
     def outcome(self, box_id: int, action: int, on_time: bool, latency_s: float, reward: float):
         pass
 
+    def cloud_call(self, answered_in_time: bool):
+        """Second opinion: a cloud call was made; was its answer in time? (only the learner uses this)"""
+
+    def spot_check(self, conf: int, saving: float):
+        """A box that had both verdicts was checked by hand afterwards. (only the learner uses this)"""
+
     def params(self) -> dict:
         return {}
 
@@ -232,9 +238,10 @@ class QPolicy(Policy):
             return (GATEWAY, CLOUD) if obs.can_cloud else (GATEWAY,)
         return (EDGE, GATEWAY, CLOUD) if obs.can_cloud else (EDGE, GATEWAY)
 
-    def __init__(self, agent: QAgent, space: StateSpace, learn=True, explore=True, name=None):
+    def __init__(self, agent: QAgent, space: StateSpace, learn=True, explore=True, name=None, live=None):
         self.agent, self.space = agent, space
         self.learn, self.explore = learn, explore
+        self.live = live                # common.cascade.LiveGain: what a cloud answer is worth, measured on the line
         if name:
             self.name = name
         self.states: dict[int, int] = {}
@@ -246,7 +253,8 @@ class QPolicy(Policy):
         s = self.space.index(obs)
         self.states[box_id] = s
         self.last_state = s
-        a = self.agent.act(s, explore=self.explore, allowed=self.allowed(obs))
+        bonus = self.live.delta(obs.conf) if (self.live is not None and obs.conf > 0) else 0.0
+        a = self.agent.act(s, explore=self.explore, allowed=self.allowed(obs), cloud_bonus=bonus)
         if self.learn:
             self.agent.fade(s, a)
         prev = box_id - 1
@@ -261,6 +269,16 @@ class QPolicy(Policy):
             self._update(box_id, action, reward, nxt)
         else:
             self.pending[box_id] = (action, reward)
+
+    def cloud_call(self, answered_in_time: bool):
+        """A cloud call was made for a second opinion; did the answer come before the arm?"""
+        if self.live is not None:
+            self.live.note_call(answered_in_time)
+
+    def spot_check(self, conf: int, saving: float):
+        """A box with both verdicts turned out to be good / damaged: the saving of that cloud call is known."""
+        if self.live is not None and self.learn:
+            self.live.update(conf, saving)
 
     def _update(self, box_id, a, r, s2):
         # NOTE: do not delete states[box_id] here - it is still needed as the
@@ -280,7 +298,8 @@ class QPolicy(Policy):
 
     def params(self):
         return {"alpha": self.agent.alpha, "gamma": self.agent.gamma,
-                "epsilon": self.agent.epsilon if self.explore else 0.0, "learn_online": self.learn}
+                "epsilon": self.agent.epsilon if self.explore else 0.0, "learn_online": self.learn,
+                "spot_checks": self.live is not None}
 
 
 def make_policy(name: str, cfg: dict, agent: QAgent | None = None, rule_params: dict | None = None):
@@ -315,4 +334,5 @@ def make_policy(name: str, cfg: dict, agent: QAgent | None = None, rule_params: 
         agent.alpha_mode = "constant"
         agent.forget = float(cfg["agent"].get("forget", 0.0))
         return QPolicy(agent, space, learn=cfg["agent"]["learn_online"], explore=cfg["agent"]["learn_online"])
+        # (the gateway attaches the spot-check tally itself: it needs the model card, see gateway_node/main.py)
     raise ValueError(f"unknown policy {name}")

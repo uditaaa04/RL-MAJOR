@@ -2,7 +2,7 @@
 
 > These are **simulated** results from the calibrated conveyor simulator. Repeat them on the real conveyor with `tools/run_experiment.py` + `tools/report_real.py`.
 
-Generated: 2026-11-25 23:45
+Generated: 2026-11-26 01:07
 
 Boxes are replayed photos: **public photos, data\public** (594 test photos; the agent and the rules were trained and tuned on 588 other photos). "Reward" in every table is minus the real cost of what happened to each box (100 for a shipped damaged box, 10 for a wasted good one, 5 plus the damage for an unchecked one). All policies see the same boxes.
 
@@ -30,16 +30,16 @@ Model quality used: {"esp32": {"recall_damaged": 0.9799, "false_reject_rate": 0.
 
 | scenario | Always-Edge | Always-Gateway | Always-Cloud | Threshold rule | Deadline rule | Adaptive rule | Ask the cloud always | Confidence rule | Confidence rule + reserve | Q-learning (frozen) | Q-learning (online) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| good | -6.32 | -2.78 | -2.36 | -2.36 | -2.36 | -2.36 | -2.41 | **-1.74** | -2.04 | -1.77 | -1.77 |
-| busy | -6.32 | -2.78 | -2.71 | -2.78 | -2.78 | -2.74 | -2.40 | -1.96 | -2.07 | -1.74 | **-1.71** |
-| bad | -6.32 | -2.78 | -10.38 | -2.78 | -2.78 | -2.78 | -2.80 | -2.78 | -2.78 | **-2.78** | -2.79 |
-| fast+busy | -6.32 | -2.78 | -3.59 | -2.78 | -2.78 | -2.78 | -2.41 | -2.78 | -2.78 | **-1.84** | -1.99 |
-| gateway-busy | -6.32 | -3.04 | -2.94 | -3.04 | -3.04 | -2.93 | -2.69 | -2.34 | -2.52 | **-1.98** | -2.10 |
-| gateway-overload | **-6.32** | -29.31 | -31.15 | -29.31 | -29.31 | **-6.32** | **-6.32** | **-6.32** | **-6.32** | **-6.32** | -6.37 |
-| bw-cap | -6.32 | -2.78 | -11.15 | -11.15 | -11.15 | -2.78 | -2.86 | **-2.78** | **-2.78** | -2.79 | -2.80 |
-| server-slow | -6.32 | -2.78 | -6.90 | -6.90 | -6.90 | -2.78 | -2.63 | -2.78 | -2.78 | -2.57 | **-2.51** |
-| lossy | -6.32 | -2.78 | -4.98 | -2.78 | -2.78 | -3.02 | -2.48 | -2.69 | -2.65 | **-2.03** | -2.09 |
-| wifi-stalls | -6.32 | -2.78 | -4.24 | -3.46 | -4.03 | -4.01 | -2.47 | -2.16 | -2.40 | **-1.92** | -2.14 |
+| good | -6.32 | -2.78 | -2.36 | -2.36 | -2.36 | -2.36 | -2.41 | -1.74 | -2.04 | **-1.67** | -1.80 |
+| busy | -6.32 | -2.78 | -2.71 | -2.78 | -2.78 | -2.74 | -2.40 | -1.96 | -2.07 | **-1.72** | -1.82 |
+| bad | -6.32 | -2.78 | -10.38 | -2.78 | -2.78 | -2.78 | -2.80 | -2.78 | -2.78 | **-2.77** | -2.77 |
+| fast+busy | -6.32 | -2.78 | -3.59 | -2.78 | -2.78 | -2.78 | -2.41 | -2.78 | -2.78 | -1.96 | **-1.91** |
+| gateway-busy | -6.32 | -3.04 | -2.94 | -3.04 | -3.04 | -2.93 | -2.69 | -2.34 | -2.52 | **-2.01** | -2.19 |
+| gateway-overload | **-6.32** | -29.31 | -31.15 | -29.31 | -29.31 | **-6.32** | **-6.32** | **-6.32** | **-6.32** | **-6.32** | **-6.32** |
+| bw-cap | -6.32 | -2.78 | -11.15 | -11.15 | -11.15 | -2.78 | -2.86 | **-2.78** | **-2.78** | **-2.78** | -2.80 |
+| server-slow | -6.32 | -2.78 | -6.90 | -6.90 | -6.90 | -2.78 | -2.63 | -2.78 | -2.78 | -2.59 | **-2.49** |
+| lossy | -6.32 | -2.78 | -4.98 | -2.78 | -2.78 | -3.02 | -2.48 | -2.69 | -2.65 | **-2.13** | -2.18 |
+| wifi-stalls | -6.32 | -2.78 | -4.24 | -3.46 | -4.03 | -4.01 | -2.47 | -2.16 | -2.40 | **-2.02** | -2.12 |
 
 **Missed boxes %**
 
@@ -50,7 +50,7 @@ Model quality used: {"esp32": {"recall_damaged": 0.9799, "false_reject_rate": 0.
 | bad | 0.0 | 0.0 | 24.8 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | fast+busy | 0.0 | 0.0 | 3.5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | gateway-busy | 0.0 | 0.0 | 1.1 | 0.0 | 0.0 | 1.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-| gateway-overload | 0.0 | 73.0 | 80.0 | 73.0 | 73.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.1 |
+| gateway-overload | 0.0 | 73.0 | 80.0 | 73.0 | 73.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | bw-cap | 0.0 | 0.0 | 26.1 | 26.1 | 26.1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | server-slow | 0.0 | 0.0 | 13.7 | 13.7 | 13.7 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | lossy | 0.0 | 0.0 | 7.7 | 0.0 | 0.0 | 0.5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
@@ -60,18 +60,18 @@ Model quality used: {"esp32": {"recall_damaged": 0.9799, "false_reject_rate": 0.
 
 | scenario | Always-Edge | Always-Gateway | Always-Cloud | Threshold rule | Deadline rule | Adaptive rule | Ask the cloud always | Confidence rule | Confidence rule + reserve | Q-learning (frozen) | Q-learning (online) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| good | 1.7 | 4.8 | 4.0 | 4.0 | 4.0 | 4.0 | 4.1 | 2.5 | 3.7 | 2.6 | 2.6 |
-| busy | 1.7 | 4.8 | 5.0 | 4.8 | 4.8 | 5.3 | 4.0 | 3.0 | 3.5 | 2.5 | 2.4 |
-| bad | 1.7 | 4.8 | 27.6 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 |
-| fast+busy | 1.7 | 4.8 | 7.7 | 4.8 | 4.8 | 4.8 | 4.0 | 4.8 | 4.8 | 2.7 | 3.2 |
-| gateway-busy | 1.7 | 4.8 | 5.1 | 4.8 | 4.8 | 5.1 | 4.0 | 3.1 | 3.8 | 2.3 | 2.7 |
-| gateway-overload | 1.7 | 72.9 | 80.8 | 72.9 | 72.9 | 1.7 | 1.7 | 1.7 | 1.7 | 1.7 | 1.8 |
+| good | 1.7 | 4.8 | 4.0 | 4.0 | 4.0 | 4.0 | 4.1 | 2.5 | 3.7 | 2.4 | 2.8 |
+| busy | 1.7 | 4.8 | 5.0 | 4.8 | 4.8 | 5.3 | 4.0 | 3.0 | 3.5 | 2.5 | 2.8 |
+| bad | 1.7 | 4.8 | 27.6 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 | 4.7 | 4.7 |
+| fast+busy | 1.7 | 4.8 | 7.7 | 4.8 | 4.8 | 4.8 | 4.0 | 4.8 | 4.8 | 3.0 | 2.9 |
+| gateway-busy | 1.7 | 4.8 | 5.1 | 4.8 | 4.8 | 5.1 | 4.0 | 3.1 | 3.8 | 2.5 | 3.1 |
+| gateway-overload | 1.7 | 72.9 | 80.8 | 72.9 | 72.9 | 1.7 | 1.7 | 1.7 | 1.7 | 1.7 | 1.7 |
 | bw-cap | 1.7 | 4.8 | 29.9 | 29.9 | 29.9 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 | 4.8 |
-| server-slow | 1.7 | 4.8 | 17.4 | 17.4 | 17.4 | 4.8 | 4.6 | 4.8 | 4.8 | 4.4 | 4.2 |
-| lossy | 1.7 | 4.8 | 11.8 | 4.8 | 4.8 | 5.6 | 4.1 | 4.5 | 4.5 | 3.1 | 3.3 |
-| wifi-stalls | 1.7 | 4.8 | 9.6 | 7.0 | 9.0 | 9.0 | 4.3 | 3.4 | 4.2 | 2.8 | 3.6 |
+| server-slow | 1.7 | 4.8 | 17.4 | 17.4 | 17.4 | 4.8 | 4.6 | 4.8 | 4.8 | 4.5 | 4.2 |
+| lossy | 1.7 | 4.8 | 11.8 | 4.8 | 4.8 | 5.6 | 4.1 | 4.5 | 4.5 | 3.4 | 3.6 |
+| wifi-stalls | 1.7 | 4.8 | 9.6 | 7.0 | 9.0 | 9.0 | 4.3 | 3.4 | 4.2 | 3.2 | 3.6 |
 
-**Average reward over all 10 situations:** Q-learning (frozen) -2.57, Q-learning (online) -2.63, Confidence rule -2.83, Confidence rule + reserve -2.91, Ask the cloud always -2.95, Adaptive rule -3.25, Always-Gateway -5.46, Always-Edge -6.32, Threshold rule -6.74, Deadline rule -6.79, Always-Cloud -8.04
+**Average reward over all 10 situations:** Q-learning (frozen) -2.60, Q-learning (online) -2.64, Confidence rule -2.83, Confidence rule + reserve -2.91, Ask the cloud always -2.95, Adaptive rule -3.25, Always-Gateway -5.46, Always-Edge -6.32, Threshold rule -6.74, Deadline rule -6.79, Always-Cloud -8.04
 
 ![E1](figures/E1_steady_comparison.png)
 
@@ -101,8 +101,8 @@ Model quality used: {"esp32": {"recall_damaged": 0.9799, "false_reject_rate": 0.
 | Gateway overloaded while the network is bad | Deadline rule | 72.7 | 218.2 | >300 | >300 | 0.0 | 0.0 |
 | Gateway overloaded while the network is bad | Adaptive rule | 0.3 | 0.9 | 25 | >300 | 0.0 | 99.6 |
 | Gateway overloaded while the network is bad | Confidence rule + reserve | 0.3 | 1.0 | 25 | >300 | 0.0 | 99.5 |
-| Gateway overloaded while the network is bad | Q-learning (frozen) | 0.4 | 1.3 | 26 | >300 | 0.0 | 99.4 |
-| Gateway overloaded while the network is bad | Q-learning (online) | 0.5 | 1.5 | 26 | >300 | 0.0 | 99.3 |
+| Gateway overloaded while the network is bad | Q-learning (frozen) | 0.2 | 0.7 | 25 | >300 | 0.0 | 99.7 |
+| Gateway overloaded while the network is bad | Q-learning (online) | 0.2 | 0.7 | 25 | >300 | 0.0 | 99.6 |
 | Wi-Fi bandwidth capped (invisible in ping) | Threshold rule | 25.0 | 75.1 | >300 | >300 | 0.0 | 0.0 |
 | Wi-Fi bandwidth capped (invisible in ping) | Deadline rule | 25.0 | 75.1 | >300 | >300 | 0.0 | 0.0 |
 | Wi-Fi bandwidth capped (invisible in ping) | Adaptive rule | 0.1 | 0.4 | 25 | >300 | 0.0 | 0.0 |
@@ -122,8 +122,8 @@ Model quality used: {"esp32": {"recall_damaged": 0.9799, "false_reject_rate": 0.
 
 | agent | reward first 500 | reward last 500 | missed % first 500 | missed % last 500 |
 |---|---|---|---|---|
-| Q-learning (online) | -2.65 | -2.44 | 0.07 | 0.20 |
-| Q-learning (from zero) | -3.68 | -2.84 | 2.37 | 0.48 |
+| Q-learning (online) | -2.64 | -2.48 | 0.13 | 0.13 |
+| Q-learning (from zero) | -3.76 | -2.85 | 2.41 | 0.48 |
 
 ![E3](figures/E3_pretraining_value.png)
 
@@ -140,10 +140,10 @@ The 'real' hardware differs from the simulator: {"gw_med_s": 2.5, "server_med_s"
 | Threshold rule | -5.670 | -4.782 | -6.548 | 7.71 | 10.65 |
 | Deadline rule | -6.203 | -5.648 | -6.892 | 9.11 | 11.18 |
 | Adaptive rule | -3.230 | -3.452 | -2.845 | 0.88 | 0.82 |
-| Q-learning (frozen) | -2.752 | -2.749 | -2.542 | 0.01 | 0.00 |
-| Q-learning (online) | -2.739 | -2.709 | -2.573 | 0.00 | 0.00 |
+| Q-learning (frozen) | -2.791 | -2.840 | -2.537 | 0.02 | 0.00 |
+| Q-learning (online) | -2.759 | -2.819 | -2.472 | 0.02 | 0.00 |
 | Adaptive rule RE-TUNED by hand (reference) | -3.129 | -3.325 | -2.817 | 1.15 | 1.02 |
-| Q re-trained on real params (reference) | -2.738 | -2.816 | -2.532 | 0.00 | 0.00 |
+| Q re-trained on real params (reference) | -2.717 | -2.746 | -2.514 | 0.01 | 0.00 |
 
 ![E5](figures/E5_sim_to_real_mismatch.png)
 
@@ -159,8 +159,8 @@ Cost per box (lower is better). "Best possible" knows which boxes a cloud answer
 | Ask the cloud always | 1.29 | 1.88 | 2.04 | 2.23 | 2.30 |
 | Confidence rule | 1.45 | 1.45 | 1.57 | 1.91 | 2.08 |
 | Confidence rule + reserve | 1.40 | 1.45 | 1.70 | 1.87 | 2.14 |
-| Q-learning (frozen) | 1.40 | 1.40 | 1.56 | 1.98 | 2.16 |
-| Q-learning (online) | 1.42 | 1.44 | 1.63 | 2.00 | 2.11 |
+| Q-learning (frozen) | 1.40 | 1.44 | 1.55 | 1.87 | 2.08 |
+| Q-learning (online) | 1.42 | 1.48 | 1.62 | 1.94 | 2.13 |
 | Best possible (knows the answers) | 0.52 | 0.52 | 0.52 | 0.58 | 1.14 |
 
 **busy network**
@@ -171,11 +171,121 @@ Cost per box (lower is better). "Best possible" knows which boxes a cloud answer
 | Ask the cloud always | 1.31 | 1.91 | 2.10 | 2.31 | 2.28 |
 | Confidence rule | 1.73 | 1.73 | 1.73 | 1.93 | 2.13 |
 | Confidence rule + reserve | 1.66 | 1.65 | 1.85 | 1.89 | 2.13 |
-| Q-learning (frozen) | 1.52 | 1.52 | 1.57 | 1.82 | 2.08 |
-| Q-learning (online) | 1.54 | 1.54 | 1.66 | 1.95 | 2.11 |
+| Q-learning (frozen) | 1.42 | 1.58 | 1.56 | 1.95 | 2.15 |
+| Q-learning (online) | 1.45 | 1.49 | 1.70 | 1.98 | 2.17 |
 | Best possible (knows the answers) | 0.96 | 0.96 | 0.96 | 0.96 | 1.25 |
 
 ![E7](figures/E7_budget.png)
+
+## E8 - The photos change (20 runs; box 1-500 normal photos, then 3000 boxes of changed photos)
+
+The same real test photos, made darker / blurred and scored again by the same three models (`tools/shift_scores.py`). Nothing is re-tuned when the change happens. Cost per box, lower is better. Only the two "spot checks" rows are told the true state of boxes afterwards (every box, or 1 box in 5); with it they re-measure what a cloud answer is worth. "Last 1500" = boxes 2001-3500, after they had time to correct themselves.
+
+**Photos become blurred (box moving); 15 cloud calls a minute**
+
+| policy | before the change | first 500 after | last 1500 | asked the cloud (last 1500) | correct verdicts (last 1500) |
+|---|---|---|---|---|---|
+| Adaptive rule | 2.22 | 4.11 | 4.09 | 0% | 84.0% |
+| Ask the cloud always | 2.21 | 4.22 | 4.18 | 25% | 83.8% |
+| Confidence rule | 1.62 | 3.16 | **3.25** | 24% | 87.1% |
+| Confidence rule + reserve | 1.90 | 3.81 | 3.79 | 25% | 86.2% |
+| Q-learning (frozen) | 1.65 | 3.17 | 3.26 | 25% | 87.3% |
+| Q-learning (online) | 1.71 | 3.23 | 3.28 | 25% | 87.1% |
+| Q-learning (online + spot checks) | 1.67 | 3.37 | 3.34 | 23% | 86.7% |
+| Q-learning (online + 1 box in 5 checked) | 1.71 | 3.36 | 3.39 | 23% | 86.7% |
+| Best possible (knows the answers) | 0.58 | 1.62 | 1.58 | 13% | 94.5% |
+
+**Photos become blurred (box moving); no call limit**
+
+| policy | before the change | first 500 after | last 1500 | asked the cloud (last 1500) | correct verdicts (last 1500) |
+|---|---|---|---|---|---|
+| Adaptive rule | 1.24 | 4.10 | 3.95 | 0% | 89.5% |
+| Ask the cloud always | 1.31 | 4.17 | 4.02 | 100% | 89.5% |
+| Confidence rule | 1.41 | 2.94 | **3.00** | 30% | 88.4% |
+| Confidence rule + reserve | 1.41 | 3.85 | 3.66 | 59% | 89.9% |
+| Q-learning (frozen) | 1.41 | 3.85 | 3.66 | 59% | 89.9% |
+| Q-learning (online) | 1.41 | 3.88 | 3.65 | 60% | 89.9% |
+| Q-learning (online + spot checks) | 1.49 | 3.53 | 3.11 | 31% | 88.2% |
+| Q-learning (online + 1 box in 5 checked) | 1.42 | 3.62 | 3.19 | 33% | 88.2% |
+| Best possible (knows the answers) | 0.58 | 1.62 | 1.58 | 13% | 94.5% |
+
+**Photos become darker (40 % light); 15 cloud calls a minute**
+
+| policy | before the change | first 500 after | last 1500 | asked the cloud (last 1500) | correct verdicts (last 1500) |
+|---|---|---|---|---|---|
+| Adaptive rule | 2.22 | 2.49 | 2.51 | 0% | 85.0% |
+| Ask the cloud always | 2.21 | 2.48 | 2.53 | 25% | 84.9% |
+| Confidence rule | 1.62 | 2.09 | 2.10 | 25% | 87.0% |
+| Confidence rule + reserve | 1.90 | 2.07 | 2.10 | 25% | 87.3% |
+| Q-learning (frozen) | 1.65 | 2.05 | **2.03** | 25% | 87.4% |
+| Q-learning (online) | 1.71 | 2.08 | 2.06 | 25% | 87.2% |
+| Q-learning (online + spot checks) | 1.67 | 2.13 | 2.11 | 23% | 87.1% |
+| Q-learning (online + 1 box in 5 checked) | 1.71 | 2.12 | 2.10 | 23% | 87.1% |
+| Best possible (knows the answers) | 0.58 | 0.81 | 0.79 | 11% | 94.3% |
+
+**Photos become darker (40 % light); no call limit**
+
+| policy | before the change | first 500 after | last 1500 | asked the cloud (last 1500) | correct verdicts (last 1500) |
+|---|---|---|---|---|---|
+| Adaptive rule | 1.24 | 2.21 | 2.14 | 0% | 88.8% |
+| Ask the cloud always | 1.31 | 2.28 | 2.20 | 100% | 88.8% |
+| Confidence rule | 1.41 | 1.96 | **1.97** | 31% | 87.8% |
+| Confidence rule + reserve | 1.41 | 2.21 | 2.13 | 60% | 88.7% |
+| Q-learning (frozen) | 1.41 | 2.21 | 2.13 | 60% | 88.7% |
+| Q-learning (online) | 1.41 | 2.25 | 2.13 | 60% | 88.7% |
+| Q-learning (online + spot checks) | 1.49 | 2.21 | 2.09 | 36% | 87.6% |
+| Q-learning (online + 1 box in 5 checked) | 1.42 | 2.22 | 2.06 | 44% | 88.2% |
+| Best possible (knows the answers) | 0.58 | 0.81 | 0.79 | 11% | 94.3% |
+
+**Photos become darker + blurred + noise; 15 cloud calls a minute**
+
+| policy | before the change | first 500 after | last 1500 | asked the cloud (last 1500) | correct verdicts (last 1500) |
+|---|---|---|---|---|---|
+| Adaptive rule | 2.22 | 6.38 | 6.26 | 0% | 64.0% |
+| Ask the cloud always | 2.21 | 6.23 | 6.29 | 25% | 64.1% |
+| Confidence rule | 1.62 | 5.13 | 5.16 | 25% | 66.5% |
+| Confidence rule + reserve | 1.90 | 5.27 | 5.52 | 25% | 65.9% |
+| Q-learning (frozen) | 1.65 | 5.04 | 5.11 | 25% | 66.5% |
+| Q-learning (online) | 1.71 | 5.14 | 5.21 | 25% | 66.4% |
+| Q-learning (online + spot checks) | 1.67 | 5.15 | **5.05** | 13% | 62.6% |
+| Q-learning (online + 1 box in 5 checked) | 1.71 | 5.18 | 5.22 | 18% | 64.0% |
+| Best possible (knows the answers) | 0.58 | 2.21 | 2.22 | 25% | 83.0% |
+
+**Photos become darker + blurred + noise; no call limit**
+
+| policy | before the change | first 500 after | last 1500 | asked the cloud (last 1500) | correct verdicts (last 1500) |
+|---|---|---|---|---|---|
+| Adaptive rule | 1.24 | 10.56 | 10.58 | 0% | 80.9% |
+| Ask the cloud always | 1.31 | 10.63 | 10.65 | 100% | 80.9% |
+| Confidence rule | 1.41 | 5.16 | 5.19 | 32% | 69.1% |
+| Confidence rule + reserve | 1.41 | 6.61 | 6.93 | 59% | 75.7% |
+| Q-learning (frozen) | 1.41 | 6.61 | 6.93 | 59% | 75.7% |
+| Q-learning (online) | 1.41 | 6.53 | 6.97 | 59% | 75.6% |
+| Q-learning (online + spot checks) | 1.49 | 5.63 | **5.10** | 22% | 65.5% |
+| Q-learning (online + 1 box in 5 checked) | 1.42 | 5.96 | 5.32 | 26% | 66.6% |
+| Best possible (knows the answers) | 0.58 | 1.48 | 1.47 | 32% | 90.1% |
+
+![E8](figures/E8_photos_change.png)
+
+## E9 - How sure are the gaps? (200 re-drawn test sets)
+
+The 594 test photos are one draw out of many possible ones. The whole E1 comparison (10 situations) was repeated on 200 re-drawn test sets (same size, photos picked with repeats). "Range" is where 95 % of the results fall. A gap is called real only when its range does not contain 0.
+
+| comparison (cost per box, A minus B) | gap | 95 % range | A cheaper in | verdict |
+|---|---|---|---|---|
+| Q-learning (online) vs Adaptive rule | -0.58 | -1.00 to -0.26 | 100% of sets | real gap |
+| Q-learning (online) vs Ask the cloud always | -0.28 | -0.57 to -0.02 | 98% of sets | real gap |
+| Q-learning (online) vs Confidence rule | -0.17 | -0.42 to +0.08 | 91% of sets | level (within chance) |
+| Q-learning (frozen) vs Confidence rule | -0.20 | -0.48 to +0.05 | 95% of sets | level (within chance) |
+| Confidence rule vs Adaptive rule | -0.41 | -0.67 to -0.16 | 100% of sets | real gap |
+
+| policy | cost per box | 95 % range |
+|---|---|---|
+| Q-learning (online) | 2.52 | 1.94 to 3.25 |
+| Adaptive rule | 3.10 | 2.44 to 3.81 |
+| Ask the cloud always | 2.80 | 2.22 to 3.47 |
+| Confidence rule | 2.69 | 2.10 to 3.39 |
+| Q-learning (frozen) | 2.50 | 1.91 to 3.23 |
 
 ## Baseline rule settings (tuned on the same random conditions as Q pre-training)
 

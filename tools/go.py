@@ -641,12 +641,15 @@ def rebuild_everything(data_rel, keep=None):
     say("[2/9] every photo's score at each place (for the second-opinion decision)")
     if run([PY, "-m", "tools.photo_scores", "--data", data_rel]) != 0:
         stop("step failed: photo scores." + safe)
+    say("  ... and the same photos made darker / blurred (for the 'photos change' experiment)")
+    if run([PY, "-m", "tools.shift_scores", "--data", data_rel]) != 0:
+        say("NOTE: the changed photos could not be scored; experiment E8 will be skipped.")
     online = os.path.join(ROOT, "models", "q_table_online.npz")     # learned with the old models
     if os.path.exists(online):
         os.remove(online)
     steps = [
         ("agent pre-training + rule tuning (second opinion, cloud-call limit)", ["-m", "sim.train_q"]),
-        ("simulation experiments E1-E5 and E7", ["-m", "sim.experiments"]),
+        ("simulation experiments E1-E5 and E7-E9", ["-m", "sim.experiments"]),
         ("other damage rates and costs (E6)", ["-m", "sim.sensitivity", "--data", data_rel]),
     ]
     for i, (what, args) in enumerate(steps, 3):
@@ -923,6 +926,16 @@ def mode_scores():
         stop("could not score the photos")
 
 
+def mode_shift():
+    """Score the same photos again after making them darker / blurred (for the 'photos changed' experiment)."""
+    ensure_env()
+    rel, _ = photos_dir()
+    if rel is None:
+        stop("no training photos on this PC")
+    if run([PY, "-m", "tools.shift_scores", "--data", rel]) != 0:
+        stop("could not score the changed photos")
+
+
 def mode_rebuild():
     """Models unchanged: redo the scores, the agent, the experiments and the summaries."""
     ensure_env()
@@ -950,9 +963,9 @@ def mode_job():
     MODES[name]()
 
 
-JOB_STEPS = ("tradeoff", "scores", "rebuild", "public", "benchmark", "test", "esp32", "packtiny")
+JOB_STEPS = ("tradeoff", "scores", "shift", "rebuild", "public", "benchmark", "test", "esp32", "packtiny")
 
-MODES = {"scores": mode_scores, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
+MODES = {"scores": mode_scores, "shift": mode_shift, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
          "test": mode_test, "retrain": mode_retrain, "public": mode_public, "benchmark": mode_benchmark,
          "remote": mode_remote,
          # names from the 2-node version, kept so a REMOTE_CONTROL window opened before the update still works:

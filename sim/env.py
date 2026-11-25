@@ -39,7 +39,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 
 from common.algos import CompletionHeap
-from common.cascade import PhotoSplit, synthetic_table
+from common.cascade import PhotoSplit, synthetic_table, verdict_cost
 from common.rl import CLOUD, EDGE, GATEWAY, Obs, RewardModel
 
 
@@ -102,6 +102,8 @@ class Condition:
     stall_s: tuple = (0.4, 0.8)     # (hidden) how long a stall lasts
     budget_per_min: float = 0.0     # cloud calls allowed per minute (0 = no limit)
     budget_burst: float = 5.0       # how many unused calls can be saved up
+    photos: str = ""                # which photo set the boxes come from ("" = the normal one; "blur", "dim" ... =
+                                    # the same photos made harder, see tools/shift_scores.py)
 
 
 @dataclass
@@ -176,6 +178,8 @@ class ConveyorSim:
                                                   # (callers pass 0.4 = the "fits" border of the state)
         # which photo each box is: fixed by the seed, NOT by what the policy does
         self.photo_seed = int(rng.integers(2 ** 31)) if photo_seed is None else int(photo_seed)
+        self.photo_sets: dict = {}                # name -> PhotoSplit: the same photos made harder (Condition.photos)
+        self.spot_rate = 0.0                      # share of boxes whose true state becomes known afterwards (spot checks)
 
     def _cloud_trip(self, c: Condition, t0: float, st: dict):
         """Send one photo to the cloud at time t0. -> (time the answer is back, energy used)."""
@@ -249,8 +253,7 @@ class ConveyorSim:
         esp_free = 0.0
         st = {"link_free": 0.0, "server_free": 0.0}
         pr = np.random.default_rng(self.photo_seed)     # which photo each box is (same for every policy)
-        ph = self.photos
-        has_edge = "edge" in ph.verdict
+        sr = np.random.default_rng(self.photo_seed + 7)  # which boxes get a spot check (same for every policy)
         rm = self.reward
         tokens, t_tok = None, 0.0                       # cloud-call budget (token bucket)
         gw_done = CompletionHeap()    # completion times -> queue length at any moment (min-heap)
@@ -299,7 +302,7 @@ class ConveyorSim:
             deadline = t + p.cam_to_arm_m / c.belt_mps - p.guard_s
             # ---- deliver feedback that is known by now
             while feedback and feedback[0][0] <= t_dec:
-                _, bid, a_f, ot_f, lat_f, rew_f, m_c, c_ok, m_g, m_e = heapq.heappop(feedback)
+                _, bid, a_f, ot_f, lat_f, rew_f, m_c, c_ok, m_g, m_e, spot = heapq.heappop(feedback)
                 if m_c is not None:   # real cloud answers also update the measured cloud time
                     val = m_c if c_ok else max(m_c, p.cloud_probe_timeout_s)
                     cloud_ewma = (1 - p.cloud_ewma_alpha) * cloud_ewma + p.cloud_ewma_alpha * val
@@ -308,7 +311,13 @@ class ConveyorSim:
                 if m_e is not None:
                     esp_ewma = 0.7 * esp_ewma + 0.3 * m_e
                 policy.outcome(bid, a_f, ot_f, lat_f, rew_f)
+                if spot is not None:                 # a second opinion was asked for this box
+                    policy.cloud_call(spot[0])
+                    if spot[2] is not None:          # ... and the box was spot-checked afterwards
+                        policy.spot_check(spot[1], spot[2])
             # ---- which box this is (ground truth: never shown to the agent)
+            ph = self.photo_sets.get(c.photos, self.photos) if c.photos else self.photos
+            has_edge = "edge" in ph.verdict
             damaged = bool(pr.random() < p.defect_rate)
             k = ph.pick(pr, damaged)
             v_gw, v_cl = int(ph.verdict["gateway"][k]), int(ph.verdict["cloud"][k])
@@ -402,7 +411,12 @@ class ConveyorSim:
             latency = (min(done, deadline) - t_dec)
             rew_agent = rm(answered if on_time else a, on_time, energy, conf_used)   # what the agent learns from
             t_avail = min(done, deadline)
-            heapq.heappush(feedback, (t_avail, box_id, a, on_time, latency, rew_agent, m_c, c_ok, m_g, m_e))
+            spot = None
+            if asked:                             # (answer in time?, confidence level, saving if spot-checked)
+                checked = self.spot_rate > 0 and c_ok and sr.random() < self.spot_rate
+                spot = (c_ok, conf_used, (verdict_cost(v_gw, damaged, rm.c_esc, rm.c_fr)
+                                          - verdict_cost(v_cl, damaged, rm.c_esc, rm.c_fr)) if checked else None)
+            heapq.heappush(feedback, (t_avail, box_id, a, on_time, latency, rew_agent, m_c, c_ok, m_g, m_e, spot))
 
             # ---- what really happened to the box (only for scoring)
             if on_time:

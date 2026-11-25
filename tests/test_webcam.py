@@ -288,6 +288,32 @@ def test_esp32_checks_a_box_and_the_arm_pushes_it():
         assert row[head.index("action")] == "EDGE" and row[head.index("answered_by")] == "EDGE"
 
 
+def test_one_ir_sensor_the_arm_is_fired_by_time():
+    """conveyor.arm_sensor: false -> no 'box at arm' event ever comes; the arm still pushes, on time."""
+    import time
+    from common.policies import AlwaysEdge
+    from common.rl import RewardModel, StateSpace
+    from gateway_node.pipeline import Pipeline
+    with tempfile.TemporaryDirectory() as d:
+        cfg = load_config(overrides={"conveyor": {"min_box_gap_s": 0.0, "cam_to_arm_m": 0.054}})   # 0.3 s at 0.18 m/s
+        reward = RewardModel(cfg["reward"], 0.3, {"recall_damaged": 0.9, "false_reject_rate": 0.06, "accuracy": 0.93},
+                             {"recall_damaged": 0.98, "false_reject_rate": 0.02, "accuracy": 0.98})
+        hw = StubHW()
+        hw.arm_sensor = False
+        pipe = Pipeline(cfg, hw, GoodCam(), StubEsp32(), StubGateway(), types.SimpleNamespace(inflight=0), StubNet(),
+                        AlwaysEdge(), reward, StateSpace(cfg["state_bins"]), d)
+        assert pipe.arm_by_time
+        t0 = time.perf_counter()
+        pipe.on_box_at_camera()
+        assert hw.pushes == 0                              # not yet: the box is still travelling
+        while hw.pushes == 0 and time.perf_counter() - t0 < 2.0:
+            time.sleep(0.01)
+        took = time.perf_counter() - t0
+        assert hw.pushes == 1 and 0.25 <= took <= 0.6, took
+        assert pipe.stats["missed"] == 0 and pipe.transit is None
+        pipe.close()
+
+
 def test_esp32_cable_pulled_gateway_takes_over():
     """The ESP32 fails fast: the gateway checks the same box, nothing is missed."""
     from common.policies import AlwaysEdge
@@ -321,3 +347,87 @@ def test_dashboard_counts_each_place_and_no_photo_as_none():
     snap = s.snapshot()
     assert s.edge == 1 and s.gateway == 1 and s.cloud == 1 and s.n == 4 and s.missed == 1
     assert snap["edge"] == 1 and snap["gateway"] == 1 and snap["cloud"] == 1
+
+
+# ----------------------------------------------------------------------------- second opinion on the real pipeline
+class StubCloud:
+    """Cloud that answers at once with a fixed chance of 'damaged'."""
+    inflight = 0
+
+    def __init__(self, p):
+        self.p, self.calls = p, 0
+
+    def submit(self, box_id, img, timeout_s, cb):
+        self.calls += 1
+        cb(box_id, {"ok": True, "p_damaged": self.p, "where": "CLOUD", "compute_s": 0.02})
+
+
+class SpyPolicy:
+    """Second-opinion policy that always asks and writes down what the pipeline tells it."""
+    name, gateway_first = "spy", True
+
+    def __init__(self):
+        self.spots, self.calls = [], []
+
+    def decide(self, box_id, obs):
+        from common.rl import CLOUD
+        return CLOUD
+
+    def outcome(self, *a):
+        pass
+
+    def cloud_call(self, in_time):
+        self.calls.append(in_time)
+
+    def spot_check(self, conf, saving):
+        self.spots.append((conf, saving))
+
+
+def _second_opinion_pipe(d, truth, cloud_p, spot_checks=True):
+    from common.rl import RewardModel, StateSpace
+    from gateway_node.pipeline import Pipeline
+    cfg = load_config(overrides={"conveyor": {"min_box_gap_s": 0.0}, "cloud_budget": {"per_min": 0},
+                                 "agent": {"spot_checks": spot_checks}})
+    reward = RewardModel(cfg["reward"], 0.3, {"recall_damaged": 0.9, "false_reject_rate": 0.06, "accuracy": 0.93},
+                         {"recall_damaged": 0.98, "false_reject_rate": 0.02, "accuracy": 0.98})
+    hw, pol, cloud = StubHW(), SpyPolicy(), StubCloud(cloud_p)
+    pipe = Pipeline(cfg, hw, GoodCam(), StubEsp32(), StubGateway(), cloud, StubNet(), pol, reward,
+                    StateSpace(cfg["state_bins"]), d, truth_fn=lambda box_id: truth)
+    return hw, pol, cloud, pipe, reward
+
+
+def test_spot_check_reports_what_the_cloud_call_saved():
+    """Gateway says 'damaged' (0.99). The box is really GOOD and the cloud says 'good': the call saved one
+    wasted good box. The pipeline tells the policy exactly that."""
+    with tempfile.TemporaryDirectory() as d:
+        hw, pol, cloud, pipe, reward = _second_opinion_pipe(d, "good", cloud_p=0.01)
+        pipe.on_box_at_camera()
+        pipe.on_box_at_arm()
+        assert cloud.calls == 1 and hw.pushes == 0                      # the cloud's verdict was used: not pushed
+        assert pol.calls == [True]
+        assert len(pol.spots) == 1 and pol.spots[0][1] == reward.c_fr
+        assert pipe.stats["asked"] == 1 and pipe.stats["changed"] == 1
+        pipe.close()
+
+
+def test_spot_check_counts_a_cloud_mistake_against_it():
+    """Gateway says 'damaged', the box IS damaged, the cloud says 'good': the call cost one shipped damaged box."""
+    with tempfile.TemporaryDirectory() as d:
+        hw, pol, cloud, pipe, reward = _second_opinion_pipe(d, "damaged", cloud_p=0.01)
+        pipe.on_box_at_camera()
+        pipe.on_box_at_arm()
+        assert pol.spots == [(pol.spots[0][0], -reward.c_esc)]
+        pipe.close()
+
+
+def test_no_spot_check_without_known_truth_or_when_switched_off():
+    with tempfile.TemporaryDirectory() as d:
+        hw, pol, cloud, pipe, _ = _second_opinion_pipe(d, None, cloud_p=0.01)
+        pipe.on_box_at_camera(); pipe.on_box_at_arm()
+        assert pol.calls == [True] and pol.spots == []
+        pipe.close()
+    with tempfile.TemporaryDirectory() as d:
+        hw, pol, cloud, pipe, _ = _second_opinion_pipe(d, "good", cloud_p=0.01, spot_checks=False)
+        pipe.on_box_at_camera(); pipe.on_box_at_arm()
+        assert pol.spots == []
+        pipe.close()
