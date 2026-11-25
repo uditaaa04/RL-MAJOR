@@ -6,6 +6,7 @@ One-click launcher - nothing to type. Used by the *.bat files in the project fol
     START_DEMO_ON_AWS.bat           -> python tools/go.py aws       (pretend belt against the real AWS server)
     CHECK_ESP32.bat                 -> python tools/go.py esp32     (finds the board, tests arm, sensors, tiny model)
     CHECK_CAMERA.bat                -> python tools/go.py camera    (one picture from every camera: which one the line uses, crop square)
+    FIRST_HARDWARE_TEST.bat         -> python tools/go.py first     (all of it in one window: packages, board, sensors, camera, real line, measurement)
     MEASURE_SPEED_VS_ACCURACY.bat   -> python tools/go.py tradeoff  (same photos at ESP32 / gateway / cloud: time and accuracy)
     TRAIN_ON_DOWNLOADED_PHOTOS.bat  -> python tools/go.py public    (public photo set -> all three models, agent, results)
     RETRAIN_ON_REAL_PHOTOS.bat      -> python tools/go.py retrain   (YOUR photos -> the same)
@@ -69,8 +70,12 @@ def stop(msg):
 def run(cmd, **kw):
     """Run a command, copy its output to the screen and the log, return the exit code."""
     say("> " + " ".join(os.path.basename(c) if i == 0 else c for i, c in enumerate(cmd)))
+    # PYTHONUNBUFFERED: without it a Python step keeps its lines back until it ends, and a line such as
+    # "wave a hand in front of the sensor NOW" would only appear when the ten seconds are already over
+    env = dict(kw.pop("env", None) or os.environ)
+    env.setdefault("PYTHONUNBUFFERED", "1")
     p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                         errors="replace", **kw)
+                         errors="replace", env=env, **kw)
     for line in p.stdout:
         say("  " + line.rstrip())
     return p.wait()
@@ -566,6 +571,93 @@ def mode_esp32():
         stop("the ESP32 check did not pass (see above)")
 
 
+def banner(text):
+    say("")
+    say("=" * 74)
+    say("  " + text)
+    say("=" * 74)
+
+
+def mode_first():
+    """The whole first hardware test in ONE window, in the right order, saying what to do at each point.
+    Needs: the ESP32 flashed and plugged in, the two IR sensors wired, a camera. No 12 V is needed."""
+    banner("STEP 1 of 6: installing what is missing (first time only, needs the Internet)")
+    ensure_env()
+    ensure_cv2()
+    ensure_ready()
+
+    banner("STEP 2 of 6: is the ESP32 there, and is the project's program on it?")
+    code = run([PY, "-m", "tools.ports", "--probe"])
+    if code == 2:
+        stop("no ESP32 was found. Plug it in with a USB DATA cable. If a driver is missing (see above), install "
+             "it. Then double-click this file again.")
+    if code != 0:
+        stop("the ESP32 does not answer with the project's program. Close the Arduino Serial Monitor if it is "
+             "open. If the board was never flashed: Arduino IDE > open esp32_node\\esp32_node.ino > board "
+             "'ESP32 Dev Module' > pick the port > Upload. Then double-click this file again.")
+
+    banner("STEP 3 of 6: the board and the two sensors")
+    say("In a moment it says 'Wave a hand in front of each IR sensor now'. You then have 10 seconds:")
+    say("pass a hand in front of sensor 1, then in front of sensor 2.")
+    say("(Without the 12 V adapter the belt and the arm do not move. That is normal.)")
+    if run([PY, "-m", "tools.esp32_check"]) != 0:
+        stop("the ESP32 check found a problem (see above). Fix it, then double-click this file again.")
+
+    banner("STEP 4 of 6: the camera")
+    say("A page opens with one picture from every camera on this laptop (the pictures stay on this PC).")
+    say("Then type the number of the camera that shows the table, and the 3 numbers under its picture.")
+    if subprocess.call([PY, "-u", "-m", "tools.camera_check"], cwd=ROOT) != 0:
+        stop("no picture came from the camera the real line would use (see above). "
+             "Plug the webcam in, close programs that use a camera, then double-click this file again.")
+
+    banner("STEP 5 of 6: the real program with live data")
+    say("The dashboard opens in the browser. Then, for every box:")
+    say("  1. hold the box under the camera so that it passes sensor 1 (the photo is taken at that moment)")
+    say("  2. move it past sensor 2 within about 2 seconds")
+    say("Do 20 to 30 boxes. Then come back to THIS window and press Enter.")
+    mode_line()
+
+    banner("STEP 6 of 6: speed against accuracy on the real ESP32 (about 3 minutes, nothing to do)")
+    mode_tradeoff()
+
+    banner("ALL DONE")
+    say("Results:")
+    say("  results\\TRADEOFF.md             time and accuracy at ESP32 / laptop / cloud (ESP32 time is now real)")
+    say("  logs\\run_<date>_<time>_qlearning\\boxes.csv   one row for every box you moved")
+    say("  logs\\go_first.log, logs\\go_gateway.log      what happened, step by step")
+    say("Tell Claude 'done'. It reads these files from your PC and tells you what the numbers mean.")
+
+
+def mode_setup():
+    """Everything the first hardware run needs, installed and checked in one go. Nothing is moved: no belt, no
+    arm, no camera. Installs OpenCV for the webcam, makes sure the models and the agent are there, then lists
+    the USB serial ports and asks the board (if one is there) which program is on it."""
+    ensure_env()
+    ensure_cv2()
+    ensure_ready()
+    say("")
+    run([PY, "-c", "import sys, numpy, onnxruntime, cv2, serial; print('python', sys.version.split()[0], "
+                   "'| numpy', numpy.__version__, '| onnxruntime', onnxruntime.__version__, "
+                   "'| opencv', cv2.__version__, '| pyserial', serial.__version__)"])
+    say("")
+    code = run([PY, "-m", "tools.ports", "--probe"])
+    say("")
+    say({0: "SETUP DONE: packages installed, and an ESP32 with the project's program answers.",
+         2: "SETUP DONE: packages installed. No ESP32 port was found (see above).",
+         3: "SETUP DONE: packages installed. A USB serial port is there, but the project's program does not "
+            "answer on it: the ESP32 still has to be flashed (or the Serial Monitor is open)."}.get(
+        code, "SETUP DONE: packages installed. The port check did not run (see above)."))
+
+
+def mode_boardtest():
+    """The ESP32 check WITHOUT any movement (no belt, no arm): board answers, tiny model loads, 30 photos timed.
+    This is the version for a run that nobody is standing next to."""
+    ensure_env()
+    ensure_tiny()
+    if run([PY, "-m", "tools.esp32_check", "--no-move"]) != 0:
+        stop("the ESP32 check did not pass (see above)")
+
+
 def mode_tradeoff():
     """The same photos at all three places: accuracy and time. Uses the real ESP32 and the AWS server when
     they are there, and says so in the result when they are not."""
@@ -1038,9 +1130,10 @@ def mode_job():
     MODES[name]()
 
 
-JOB_STEPS = ("tradeoff", "scores", "shift", "rebuild", "public", "benchmark", "test", "esp32", "packtiny")
+JOB_STEPS = ("tradeoff", "scores", "shift", "rebuild", "public", "benchmark", "test", "esp32", "packtiny",
+             "setup", "boardtest")
 
-MODES = {"camera": mode_camera, "scores": mode_scores, "shift": mode_shift, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
+MODES = {"first": mode_first, "setup": mode_setup, "boardtest": mode_boardtest, "camera": mode_camera, "scores": mode_scores, "shift": mode_shift, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
          "test": mode_test, "retrain": mode_retrain, "public": mode_public, "benchmark": mode_benchmark,
          "remote": mode_remote,
          # names from the 2-node version, kept so a REMOTE_CONTROL window opened before the update still works:

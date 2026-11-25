@@ -93,6 +93,8 @@ No 12 V adapter is needed for this. Without 12 V the belt motor and the servo do
 from the buck converter, which is fed by the 12 V adapter). **Do not power the servo from an ESP32 pin instead**:
 the board resets.
 
+**One double-click does all four steps below in order: `FIRST_HARDWARE_TEST.bat`.** By hand they are:
+
 1. `CHECK_ESP32.bat`: the board answers, the tiny model loads, 30 photos are timed (the first number measured
    on the real board), both sensors show an event when a hand passes.
 2. `CHECK_CAMERA.bat`: one picture from every camera on the laptop. Type the number of the camera that looks at

@@ -107,3 +107,53 @@ def test_opencv_install_never_compiles_and_has_a_second_try(monkeypatch):
     except Stopped as e:
         assert "OpenCV could not be installed" in str(e)
     assert len(calls) == 2
+
+
+def test_a_step_shows_its_lines_while_it_runs_not_only_at_the_end(monkeypatch):
+    """'Wave a hand in front of the sensor NOW' must appear before the ten seconds are over."""
+    sys.path.insert(0, ROOT)
+    from tools import go
+    seen = []
+    monkeypatch.setattr(go, "say", lambda msg="": seen.append((time.time(), msg)))
+    code = go.run([sys.executable, "-c", "import time\nprint('wave now')\ntime.sleep(1.5)\nprint('over')"])
+    assert code == 0
+    t_wave = next(t for t, m in seen if m.strip() == "wave now")      # (the first line shown is the command itself)
+    t_over = next(t for t, m in seen if m.strip() == "over")
+    assert t_over - t_wave > 1.0                      # with held-back output both lines arrive together
+
+
+def test_first_hardware_test_runs_the_steps_in_order_and_stops_with_a_clear_reason(monkeypatch):
+    sys.path.insert(0, ROOT)
+    from tools import go
+    order, port_code = [], {"v": 0}
+
+    class Stopped(Exception):
+        pass
+
+    def fake_run(cmd, **kw):
+        name = cmd[2] if len(cmd) > 2 else "?"
+        order.append(name)
+        return port_code["v"] if name == "tools.ports" else 0
+
+    def fake_stop(msg):
+        raise Stopped(msg)
+
+    monkeypatch.setattr(go, "run", fake_run)
+    monkeypatch.setattr(go, "stop", fake_stop)
+    monkeypatch.setattr(go, "say", lambda *a: None)
+    for name in ("ensure_env", "ensure_cv2", "ensure_ready"):
+        monkeypatch.setattr(go, name, lambda *a, **k: None)
+    monkeypatch.setattr(go, "mode_line", lambda: order.append("line"))
+    monkeypatch.setattr(go, "mode_tradeoff", lambda: order.append("tradeoff"))
+    monkeypatch.setattr(go.subprocess, "call", lambda cmd, **kw: order.append(cmd[3]) or 0)
+    go.mode_first()
+    assert order == ["tools.ports", "tools.esp32_check", "tools.camera_check", "line", "tradeoff"]
+    for code, words in ((2, "no ESP32 was found"), (3, "does not answer")):
+        order.clear()
+        port_code["v"] = code
+        try:
+            go.mode_first()
+            raise AssertionError("should have stopped")
+        except Stopped as e:
+            assert words in str(e)
+        assert order == ["tools.ports"]               # nothing else is started without the board

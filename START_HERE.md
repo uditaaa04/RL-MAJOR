@@ -13,6 +13,7 @@ Double-click these files in this folder.
 | File | What it does |
 |---|---|
 | `START_DEMO.bat` | The whole product with **no hardware**: pretend belt, this PC is also the cloud. Opens the dashboard. If an ESP32 is plugged in, its tiny model is really used. First run builds the Python environment (2-5 min, needs Internet). |
+| `FIRST_HARDWARE_TEST.bat` | **The whole first hardware test in one window.** Installs what is missing, finds the ESP32, tests the board and the two sensors, checks the camera, runs the real line, then measures speed against accuracy on the real ESP32. It says what to do at each point. The ESP32 must be flashed first. |
 | `CHECK_ESP32.bat` | Tests the ESP32 alone: finds it, loads the tiny model, times it, swings the arm, shows the two sensors. Run this after wiring. |
 | `CHECK_CAMERA.bat` | Takes one picture from every camera on this laptop and opens a page with them. Shows which camera the real line uses and its crop square. Type the right camera number and square in the black window; they are saved. The pictures stay on this PC. |
 | `START_REAL_LINE.bat` | **The real belt**: ESP32 on USB + webcam. Cloud is the AWS server if you have set it up, otherwise this PC. |
@@ -38,7 +39,8 @@ Stop anything: press Enter in its black window.
 5. Stop it (Enter: the belt stops within two seconds and what the agent learned is saved), then double-click
    `MEASURE_SPEED_VS_ACCURACY.bat` for the real ESP32 timing.
 
-No belt yet? `docs/ESP32_WIRING.md`, section 4, is a bench test with only the ESP32, the two sensors and the webcam.
+No belt yet? Flash the ESP32, then double-click `FIRST_HARDWARE_TEST.bat`: it does steps 2 to 5 in one window with
+only the ESP32, the two sensors and a camera (`docs/ESP32_WIRING.md`, section 4, describes the same test by hand).
 
 Settings you may need (file `config/system.yaml`):
 - `esp32.servo_rest_deg`, `esp32.servo_push_deg`: arm angles.
