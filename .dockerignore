@@ -1,0 +1,11 @@
+.venv/
+**/__pycache__/
+*.pyc
+data/
+logs/
+dist/
+cloud_data/
+cloud/.secrets/
+models/*.pt
+models/*_online.npz
+results/

@@ -1,0 +1,26 @@
+[Unit]
+Description=Smart Conveyor QC - cloud inference server + dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=conveyor
+Group=conveyor
+WorkingDirectory=/opt/smart-conveyor/app
+EnvironmentFile=/etc/smart-conveyor.env
+ExecStart=/opt/smart-conveyor/venv/bin/python -m server.app --cpu-only
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/smart-conveyor/server.log
+StandardError=append:/var/log/smart-conveyor/server.log
+# hardening: the service can only write its data and log folders
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/smart-conveyor /var/log/smart-conveyor
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

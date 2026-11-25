@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+data/synth/
+data/real/raw/
+logs/
+models/*_online.npz
+*.tmp.npz
+*.download
+# cloud: build output, local server data and SECRETS (API keys) - never commit these
+dist/
+cloud_data/
+cloud/.secrets/
+# old versions, backups and training leftovers kept only on the PC
+_old_2node_version/
+models_before_*/
+models_candidate/
+*.pt
+data/public/
+data/real/

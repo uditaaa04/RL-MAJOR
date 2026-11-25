@@ -1,0 +1,20 @@
+# Gateway laptop (webcam, ESP32 link, agent) - also runs the cloud server locally, training, simulation, dashboard
+#   pip install -r requirements-laptop.txt
+numpy>=1.24
+pillow>=10.0
+onnxruntime>=1.17          # for NVIDIA GPU inference instead: pip install onnxruntime-gpu
+flask>=3.0
+waitress>=3.0
+requests>=2.31
+pyyaml>=6.0
+psutil>=5.9
+pyserial>=3.5              # USB link to the ESP32
+opencv-python-headless>=4.9   # webcam (only needed for the real belt)
+matplotlib>=3.7
+pandas>=2.0
+tabulate>=0.9
+openpyxl>=3.1              # only for the optional task-graph benchmark (benchmark_stfg)
+# training the vision models (GPU strongly recommended):
+#   CUDA build:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   CPU only:    pip install torch torchvision
+onnx>=1.15

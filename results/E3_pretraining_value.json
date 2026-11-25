@@ -1,0 +1,14 @@
+{
+  "Q-learning (online)": {
+    "reward_first_500": -2.6517485553711695,
+    "reward_last_500": -2.443182343635586,
+    "missed_first_500_%": 0.07333333333333333,
+    "missed_last_500_%": 0.2
+  },
+  "Q-learning (from zero)": {
+    "reward_first_500": -3.684241027392468,
+    "reward_last_500": -2.839715240453197,
+    "missed_first_500_%": 2.373333333333333,
+    "missed_last_500_%": 0.48
+  }
+}

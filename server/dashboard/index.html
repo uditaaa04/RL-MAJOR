@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Conveyor QC</title>
+<link rel="icon" href="data:,">
+<meta name="color-scheme" content="dark light">
+<script>
+  /* theme: ?theme=light|dark in the address wins, then the choice saved in this browser, else dark */
+  try{var q=new URLSearchParams(location.search).get("theme"),t=(q==="light"||q==="dark")?q:localStorage.getItem("conveyorTheme");
+    if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}
+</script>
+<style>
+  /* Palette: black, white, cyan. Red is used for alerts only (missed box, shipped defect, node offline). */
+  /* --bg = page, --fg = lines and strong text, --cyan = cyan for text and lines, --cyan-fill = cyan for filled areas */
+  :root{
+    color-scheme:dark;
+    --bg:#000; --fg:#fff; --cyan:#00e0ff; --cyan-fill:#00e0ff; --on-cyan:#000; --red:#ff3b30;
+    --fg-rgb:255,255,255; --bg-rgb:0,0,0; --cyan-rgb:0,224,255;
+    --ink:rgba(255,255,255,.92); --soft:rgba(255,255,255,.60); --faint:rgba(255,255,255,.34);
+    --rule:rgba(255,255,255,.14); --rule2:rgba(255,255,255,.07); --wash:rgba(255,255,255,.045);
+    --cyan-wash:rgba(0,224,255,.12); --red-wash:rgba(255,59,48,.14);
+    --din:"Bahnschrift","DIN Alternate","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
+    --text:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,Ubuntu,sans-serif;
+  }
+  :root[data-theme="light"]{
+    color-scheme:light;
+    --bg:#fff; --fg:#000; --cyan:#007f99; --cyan-fill:#00cdea; --on-cyan:#000; --red:#d6261b;
+    --fg-rgb:0,0,0; --bg-rgb:255,255,255; --cyan-rgb:0,178,206;
+    --ink:rgba(0,0,0,.90); --soft:rgba(0,0,0,.64); --faint:rgba(0,0,0,.44);
+    --rule:rgba(0,0,0,.20); --rule2:rgba(0,0,0,.10); --wash:rgba(0,0,0,.045);
+    --cyan-wash:rgba(0,178,206,.14); --red-wash:rgba(214,38,27,.12);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 var(--text)}
+  button,select,input{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .num{font-family:var(--din);font-variant-numeric:tabular-nums;font-stretch:88%}
+
+  /* ---------- top bar ---------- */
+  .top{display:flex;align-items:flex-end;gap:10px 20px;padding:18px 28px 16px;border-bottom:1px solid var(--rule);flex-wrap:wrap;justify-content:flex-end}
+  .top .brand{margin-right:auto}
+  .brand h1{margin:0;font:600 26px/1 var(--din);font-stretch:82%;letter-spacing:.01em}
+  .brand p{margin:7px 0 0;color:var(--soft);font-size:13px;max-width:60ch}
+  .spacer{flex:1}
+  @media (max-width:1280px){.top .spacer{display:none}.top .brand{flex-basis:100%}.top{gap:10px 22px}}
+  .stat{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--soft);white-space:nowrap}
+  .stat b{color:var(--ink);font-weight:600}
+  .led{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+  .stat.on .led{background:var(--cyan-fill);box-shadow:0 0 10px var(--cyan-fill)}
+  .stat.alert{color:var(--red)} .stat.alert b{color:var(--red)} .stat.alert .led{background:var(--red);box-shadow:0 0 10px var(--red)}
+
+  /* ---------- views + tabs ---------- */
+  .tabs{display:flex;gap:22px;padding:0 28px;border-bottom:1px solid var(--rule);overflow-x:auto;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none} .tabs button{white-space:nowrap;flex:none}
+  .tabs button{background:none;border:0;padding:12px 0 11px;font:600 15px/1 var(--din);font-stretch:88%;color:var(--soft);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tabs button:hover{color:var(--fg)} .tabs button.active{color:var(--fg);border-bottom-color:var(--cyan-fill)}
+  .tabs .fs{font-weight:400;font-size:13px} .tabs .fs.push{margin-left:auto}
+  .view{display:none} .view.active{display:block}
+  /* ---------- results + how it works ---------- */
+  .page{max-width:1280px}
+  .page section{padding:22px 28px 26px}
+  .page h2{font-size:20px} .page .lead{font-size:13.5px;max-width:78ch;margin-bottom:16px}
+  .banner{padding:12px 28px;border-bottom:1px solid var(--rule);color:var(--soft);font-size:13.5px}
+  .banner b{color:var(--ink)}
+  .bars{display:grid;grid-template-columns:max-content 1fr max-content;gap:9px 14px;align-items:center;max-width:860px}
+  .bars .n{font-size:13.5px;color:var(--soft)} .bars .n.q{color:var(--cyan)}
+  .bars .b{height:14px;background:var(--rule2)} .bars .b i{display:block;height:100%;background:var(--fg)} .bars .b.q i{background:var(--cyan-fill)}
+  .bars .v{font:600 16px/1 var(--din);font-variant-numeric:tabular-nums;text-align:right}
+  table.mx{border-collapse:collapse;font-size:13px;width:100%;max-width:1180px}
+  table.mx th{font-weight:400;color:var(--soft);text-align:right;padding:6px 10px;border-bottom:1px solid var(--rule);white-space:nowrap}
+  table.mx th:first-child,table.mx td:first-child{text-align:left;color:var(--ink);white-space:normal}
+  table.mx td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--rule2);font-family:var(--din);font-variant-numeric:tabular-nums;font-size:14.5px}
+  table.mx td:first-child{font-family:var(--text);font-size:13px}
+  table.mx td.best{box-shadow:inset 0 0 0 1px var(--fg)} table.mx .q{color:var(--cyan)}
+  .scroll{overflow-x:auto}
+  .take{margin:14px 0 0;font-size:14px;color:var(--ink);max-width:80ch} .take.alert{color:var(--red)}
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:0;max-width:860px;border:1px solid var(--rule)}
+  .duo>div{padding:16px 18px} .duo>div+div{border-left:1px solid var(--rule)}
+  .duo.trio{grid-template-columns:1fr 1fr 1fr;max-width:1180px}
+  .duo h3{margin:0 0 2px;font:600 16px/1.2 var(--din)} .duo .sub{color:var(--faint);font-size:12px;margin-bottom:12px}
+  .duo .m{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-top:1px solid var(--rule2);font-size:13px;color:var(--soft)}
+  .duo .m b{font:600 20px/1 var(--din);color:var(--ink);font-variant-numeric:tabular-nums} .duo .cy h3{color:var(--cyan)}
+  .how{display:grid;grid-template-columns:1fr 1fr;border-top:0}
+  .how>article{padding:24px 28px 26px;border-bottom:1px solid var(--rule)} .how>article:nth-child(odd){border-right:1px solid var(--rule)}
+  .how h2{font-size:21px;margin-bottom:8px} .how p{margin:0 0 10px;color:var(--soft);font-size:14.5px;line-height:1.55;max-width:62ch}
+  .how p b{color:var(--ink);font-weight:600} .how .c{color:var(--cyan)}
+  .how ul{margin:0;padding:0;list-style:none} .how li{padding:7px 0;border-top:1px solid var(--rule2);color:var(--soft);font-size:14px;display:flex;gap:14px;justify-content:space-between}
+  .how li b{color:var(--ink);font-weight:600} .how li span.n{font:600 17px/1 var(--din);color:var(--ink);white-space:nowrap}
+  .how .yes b{color:var(--cyan)} .how .no b{color:var(--ink)}
+  @media (max-width:900px){.how{grid-template-columns:1fr}.how>article:nth-child(odd){border-right:0}.duo,.duo.trio{grid-template-columns:1fr}.duo>div+div{border-left:0;border-top:1px solid var(--rule)}}
+
+  /* ---------- the line (hero) ---------- */
+  .line{position:relative;border-bottom:1px solid var(--rule)}
+  #cLine{display:block;width:100%;height:410px}
+  .story{position:absolute;left:28px;top:16px;max-width:min(46ch,44%);pointer-events:none}
+  .story .step{font:600 13px/1.2 var(--din);color:var(--cyan);font-stretch:90%}
+  .story .say{margin-top:4px;font-size:15px;line-height:1.35;color:var(--ink)}
+  .head{position:absolute;left:28px;top:18px;max-width:min(40ch,40%);pointer-events:none}
+  .head .big{font:600 27px/1.08 var(--din);font-stretch:84%;color:var(--fg)} .head.alert .big{color:var(--red)}
+  .head .small{margin-top:6px;font-size:13px;color:var(--soft)}
+  .why{display:flex;gap:14px;align-items:baseline;padding:11px 28px 13px;border-top:1px solid var(--rule2);min-height:44px}
+  .why .id{font:600 18px/1 var(--din);font-stretch:85%;color:var(--ink);white-space:nowrap}
+  .why .txt{color:var(--soft);font-size:14px}
+  .why .txt b{color:var(--ink);font-weight:600} .why .txt .c{color:var(--cyan)} .why.alert .id,.why.alert .txt b{color:var(--red)}
+
+  /* ---------- KPI rail ---------- */
+  .rail{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));border-bottom:1px solid var(--rule)}
+  .k{padding:16px 18px 15px;border-left:1px solid var(--rule2);min-width:0}
+  .k:first-child{border-left:0;padding-left:28px}
+  .k .v{font:600 34px/1 var(--din);font-stretch:80%;font-variant-numeric:tabular-nums;letter-spacing:.005em}
+  .k .l{margin-top:7px;font-size:12.5px;color:var(--ink)}
+  .k .s{font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .k.cy .v{color:var(--cyan)} .k.alert .v{color:var(--red)}
+
+  /* ---------- body grid ---------- */
+  main{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(330px,1fr)}
+  .colL{border-right:1px solid var(--rule);min-width:0}
+  .colR{min-width:0}
+  section{padding:18px 28px 20px;border-bottom:1px solid var(--rule)}
+  .colR section{padding:18px 24px 20px}
+  h2{margin:0 0 3px;font:600 17px/1.2 var(--din);font-stretch:86%;letter-spacing:.01em}
+  .lead{margin:0 0 12px;color:var(--soft);font-size:12.5px;max-width:70ch}
+  canvas{display:block;width:100%}
+  .key{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--soft)}
+  .key i{display:inline-block;width:14px;height:3px;margin-right:6px;vertical-align:3px;background:var(--fg)}
+
+  /* ---------- controls ---------- */
+  .seg{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+  .seg button{flex:1 1 auto;background:transparent;border:0;border-left:1px solid var(--rule);padding:8px 10px;font-size:12.5px;cursor:pointer;color:var(--soft);white-space:nowrap}
+  .seg button:first-child{border-left:0}
+  .seg button:hover{color:var(--fg);background:var(--wash)}
+  .seg button.active{background:var(--cyan-fill);color:var(--on-cyan);font-weight:600}
+  .btn{background:transparent;border:1px solid var(--rule);border-radius:6px;padding:8px 12px;font-size:12.5px;cursor:pointer;color:var(--ink)}
+  .btn:hover{border-color:var(--soft);background:var(--wash)}
+  .btn.active{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:600}
+  .btn.go{border-color:var(--cyan);color:var(--cyan);font-weight:600}
+  .btn.go:hover{background:var(--cyan-wash)} .btn.go.active{background:var(--cyan-fill);color:var(--on-cyan);border-color:var(--cyan-fill)}
+  .rowc{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .rowc>label{color:var(--soft);font-size:12.5px;min-width:92px}
+  input[type=range]{flex:1;accent-color:var(--cyan);min-width:120px}
+  select{background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:7px 10px;font-size:12.5px;flex:1;min-width:150px}
+  .note{font-size:11.5px;color:var(--faint);margin-top:10px}
+  .keybox{display:none;margin-top:10px;gap:8px} .keybox.open{display:flex}
+  .keybox input{flex:1;background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:7px 10px;font-size:12.5px;min-width:0}
+
+  /* ---------- cloud eye ---------- */
+  .eye{display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:center}
+  #latestWrap{position:relative;width:150px;height:150px;background:var(--wash);border:1px solid var(--rule)}
+  #latestImg{width:100%;height:100%;display:block;object-fit:cover}
+  #heatCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:screen}
+  .eye .p{font:600 40px/1 var(--din);font-stretch:80%;font-variant-numeric:tabular-nums}
+  .eye .pl{font-size:12.5px;color:var(--soft);margin-top:6px}
+
+  /* ---------- feed ---------- */
+  .feed{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:1px;background:var(--rule2);border:1px solid var(--rule2)}
+  .bx{background:var(--bg);padding:8px;min-width:0;font-size:11.5px}
+  .bx img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;filter:saturate(.85)}
+  .bx .h{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px}
+  .bx .h b{font:600 14px/1 var(--din);font-stretch:85%}
+  .bx .w{color:var(--soft)} .bx .w.c{color:var(--cyan)}
+  .bx .r{color:var(--soft);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bx .r b{color:var(--ink);font-weight:600}
+  .bx.alert{box-shadow:inset 0 0 0 1px var(--red)} .bx.alert .r b{color:var(--red)}
+  .empty{color:var(--faint);font-size:13px;padding:8px 0}
+
+  @media (max-width:1180px){
+    main{grid-template-columns:1fr}.colL{border-right:0}
+    .rail{grid-template-columns:repeat(4,1fr)} .k:nth-child(5){border-left:0;padding-left:28px} .k:nth-child(n+5){border-top:1px solid var(--rule2)}
+    .feed{grid-template-columns:repeat(4,1fr)} .story,.head{position:static;max-width:none;padding:14px 28px 0}
+  }
+  @media (max-width:640px){
+    .rail{grid-template-columns:repeat(2,1fr)} .k{padding-left:18px!important;border-left:0;border-top:1px solid var(--rule2)}
+    .feed{grid-template-columns:repeat(2,1fr)} #cLine{height:360px} section,.colR section,.top,.why{padding-left:16px;padding-right:16px}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <h1>Smart Conveyor QC</h1>
+    <p>The gateway laptop checks every box first. Q-learning then decides whether the cloud should check it too, with a limited number of cloud calls. The ESP32 runs the belt and steps in when the laptop is overloaded.</p>
+  </div>
+  <div class="spacer"></div>
+  <div class="stat" id="stEsp"><span class="led"></span><span>ESP32</span> <b id="stEspV">waiting</b></div>
+  <div class="stat" id="stPi"><span class="led"></span><span>Gateway</span> <b id="stPiV">waiting</b></div>
+  <div class="stat" id="stSrv"><span class="led"></span><span>Cloud server</span> <b id="stSrvV">waiting</b></div>
+  <div class="stat" id="stBud"><span class="led"></span><span>Cloud calls</span> <b id="stBudV">waiting</b></div>
+  <div class="stat" id="stPol"><span class="led"></span><span>Deciding</span> <b id="stPolV">waiting</b></div>
+</header>
+
+<nav class="tabs" aria-label="Pages">
+  <button data-v="live" class="active">Live line</button>
+  <button data-v="results">Results</button>
+  <button data-v="how">How it works</button>
+  <button class="fs push" id="btnTheme">Light theme</button>
+  <button class="fs" id="btnFs">Full screen</button>
+</nav>
+
+<div class="view active" id="view-live">
+<div class="line">
+  <canvas id="cLine" aria-label="Live view of the conveyor line"></canvas>
+  <div class="head" id="head" hidden><div class="big" id="headBig"></div><div class="small" id="headSmall"></div></div>
+  <div class="story" id="story" hidden><div class="step" id="storyStep"></div><div class="say" id="storySay"></div></div>
+  <div class="why" id="why"><span class="id" id="whyId">No boxes yet</span><span class="txt" id="whyTxt">Start the gateway, or double-click START_DEMO, and the line comes alive here.</span></div>
+</div>
+
+<div class="rail">
+  <div class="k"><div class="v" id="kN">0</div><div class="l">Boxes checked</div><div class="s" id="kRate">&nbsp;</div></div>
+  <div class="k"><div class="v" id="kEsp">0%</div><div class="l">Checked on the ESP32</div><div class="s" id="kEspS">tiny model, on the belt</div></div>
+  <div class="k"><div class="v" id="kEdge">0%</div><div class="l" id="kEdgeL">Checked on the gateway</div><div class="s" id="kGwS">small model, on the laptop</div></div>
+  <div class="k cy"><div class="v" id="kCloud">0%</div><div class="l" id="kCloudL">Sent to the cloud</div><div class="s" id="kCloudS">big model, over the Internet</div></div>
+  <div class="k" id="kMissK"><div class="v" id="kMiss">0%</div><div class="l">Missed, answer too late</div><div class="s" id="kMiss100">&nbsp;</div></div>
+  <div class="k"><div class="v" id="kAcc">n/a</div><div class="l">Correct verdicts</div><div class="s" id="kAccS">needs true labels</div></div>
+  <div class="k" id="kEscK"><div class="v" id="kEsc">n/a</div><div class="l">Defects shipped</div><div class="s" id="kEscS">&nbsp;</div></div>
+  <div class="k"><div class="v" id="kRew">n/a</div><div class="l">Score per box</div><div class="s" id="kLat">closer to 0 is better</div></div>
+</div>
+
+<main>
+  <div class="colL">
+    <section>
+      <h2>Where each box was checked</h2>
+      <p class="lead">Last 300 boxes, oldest on the left. One row per place. A box in the cloud row was checked by the gateway first and then sent up for a second opinion. The cyan curve is the share going to the cloud.</p>
+      <canvas id="cDec" height="230"></canvas>
+    </section>
+    <section>
+      <h2>What the gateway measures before it decides</h2>
+      <p class="lead">Milliseconds per box. When the cloud answer time climbs toward the time available, asking the cloud is pointless and the gateway's verdict stands. When the gateway itself gets that slow, only the ESP32 is left.</p>
+      <canvas id="cNet" height="250"></canvas>
+      <div class="key">
+        <span><i style="background:var(--faint)"></i>ping</span>
+        <span><i style="background:var(--cyan)"></i>cloud answer time (2-second test photo)</span>
+        <span><i style="background:var(--fg)"></i>gateway's own model</span>
+        <span><i style="background:repeating-linear-gradient(90deg,var(--fg) 0 5px,transparent 5px 9px)"></i>time available before the arm</span>
+      </div>
+    </section>
+    <section>
+      <h2>Latest boxes</h2>
+      <div class="feed" id="feed"></div>
+      <div class="empty" id="feedEmpty">Photos of the boxes appear here as they pass the camera.</div>
+    </section>
+  </div>
+
+  <div class="colR">
+    <section>
+      <h2>Test the line</h2>
+      <p class="lead">Break something while it runs and watch the agent react.</p>
+      <div class="rowc" style="margin-top:0"><button class="btn go" id="btnDemo">Run the guided demo</button><span class="note" style="margin:0" id="demoNote"></span></div>
+      <div class="rowc"><label>Wi-Fi</label></div>
+      <div class="seg" id="scenBtns" style="margin-top:6px"></div>
+      <div class="rowc">
+        <button class="btn" id="btnSlow">Overload the cloud server</button>
+        <button class="btn" id="btnStress">Overload the gateway</button>
+      </div>
+      <div class="rowc"><label>Cloud calls a minute</label></div>
+      <div class="seg" id="budBtns" style="margin-top:6px"></div>
+      <div class="rowc"><label for="belt">Belt speed</label><input type="range" id="belt" min="0.2" max="1" step="0.05"><span class="num" id="beltV" style="min-width:34px;text-align:right">0.00</span></div>
+      <div class="rowc"><label for="policy">Who decides</label>
+        <select id="policy">
+          <option value="qlearning">Q-learning agent</option>
+          <option value="confidence">Confidence rule (second opinion)</option>
+          <option value="confidence_reserve">Confidence rule + reserve</option>
+          <option value="ask_always">Always ask the cloud too</option>
+          <option value="adaptive">Adaptive rule (one place)</option>
+          <option value="deadline">Deadline rule</option>
+          <option value="threshold">Threshold rule</option>
+          <option value="always_gateway">Always the gateway</option>
+          <option value="always_edge">Always the ESP32</option>
+          <option value="always_cloud">Always the cloud</option>
+        </select>
+      </div>
+      <div class="rowc"><button class="btn" id="btnReset">Reset counters</button><button class="btn" id="btnCsv">Download box log</button><button class="btn" id="btnKey">API key</button></div>
+      <div class="keybox" id="keyBox"><input id="keyIn" type="password" placeholder="Paste the server API key" autocomplete="off"><button class="btn" id="keySave">Save key</button></div>
+      <div class="note" id="shapeNote"></div>
+    </section>
+
+    <section>
+      <h2>What the agent has learned</h2>
+      <p class="lead" id="qNote">Each cell is one situation. Cyan means ask the cloud, white means keep the gateway's verdict, striped the ESP32. The map is drawn for a box like the last one (how sure the gateway was, cloud calls left). The outlined cell is the last box.</p>
+      <canvas id="cQ" height="262"></canvas>
+    </section>
+
+    <section>
+      <h2>Latest cloud check</h2>
+      <div class="eye">
+        <div id="latestWrap"><img id="latestImg" alt=""><canvas id="heatCanvas"></canvas></div>
+        <div><div class="p" id="eyeP">n/a</div><div class="pl" id="eyeL">No photo has been sent to the cloud yet.</div>
+          <div class="note">The glow marks where the big model sees damage.</div></div>
+      </div>
+    </section>
+  </div>
+</main>
+</div>
+
+<div class="view" id="view-results">
+  <div class="banner" id="resBanner">Loading the experiment results.</div>
+  <div class="page" id="resBody"></div>
+</div>
+
+<div class="view" id="view-how">
+  <div class="how">
+    <article>
+      <h2>Three checkers, one box</h2>
+      <p>The gateway's webcam photographs every box. Three programs can judge the photo. <b>The gateway's model looks first</b>, in about 2 ms. If it is unsure, the agent can also <b class="c">ask the cloud for a second opinion</b>. If the cloud answers too late, the gateway's verdict is used, so the box is still checked.</p>
+      <ul>
+        <li><span><b>Tiny model on the ESP32.</b> The board that runs the belt. It gets a shrunken grey photo over the USB cable. Weakest eyes, used only when the laptop is too busy to check boxes in time.</span><span class="n" id="howEsp"></span></li>
+        <li><span><b>Small model on the gateway laptop.</b> Right next to the belt, fast, good accuracy, unless the laptop is busy.</span><span class="n" id="howEdge"></span></li>
+        <li><span><b class="c">Big model on the cloud server.</b> Most accurate, but the photo has to travel there and back.</span><span class="n" id="howCloud"></span></li>
+      </ul>
+    </article>
+    <article>
+      <h2>A race against the belt</h2>
+      <p>The box keeps moving. From the camera to the reject arm it travels for <b>about 0.3 to 0.7 seconds</b>. That is all the time there is.</p>
+      <p>An answer that arrives after the box has passed the arm is worthless. <b>The box ships unchecked</b>, which is the worst outcome on this line. So a weak answer in time beats a perfect answer too late.</p>
+    </article>
+    <article>
+      <h2>What the gateway looks at before each box</h2>
+      <ul>
+        <li><span><b>Time to spare</b> if the box is sent to the cloud</span><span class="n">8 levels</span></li>
+        <li><span><b>Cloud answer time</b>, measured with a small test photo every 2 seconds</span><span class="n">3 levels</span></li>
+        <li><span><b>Ping</b> to the server</span><span class="n">3 levels</span></li>
+        <li><span><b>Can the gateway's own model finish in time</b> (its measured speed and queue against the time left)</span><span class="n">3 levels</span></li>
+        <li><span><b>Photos already waiting</b> at the cloud</span><span class="n">2 levels</span></li>
+        <li><span><b>How sure the gateway's model is</b> about this box</span><span class="n">5 levels</span></li>
+        <li><span><b>Cloud calls left</b> right now (none, 1, 2, 3 or more)</span><span class="n">4 levels</span></li>
+        <li><span>Together</span><span class="n">8,640 situations</span></li>
+      </ul>
+    </article>
+    <article>
+      <h2>How it scores itself</h2>
+      <p>After every box it gets a score. The score is a cost, so closer to zero is better.</p>
+      <ul>
+        <li><span>A damaged box is shipped</span><span class="n">100</span></li>
+        <li><span>A box passes unchecked</span><span class="n">about 35</span></li>
+        <li><span>A good box is thrown away</span><span class="n">10</span></li>
+        <li><span>Electricity used</span><span class="n">1 per joule</span></li>
+      </ul>
+      <p style="margin-top:12px">For each situation it keeps three numbers: the score it expects from keeping the gateway's verdict, from asking the cloud, and from the ESP32. It picks the best one, sees what happened, and corrects the number. That is Q-learning. Cloud calls are limited, so a call spent on an easy box is missing for a hard one a few boxes later; the agent learns that too.</p>
+    </article>
+    <article>
+      <h2>Why learn, instead of writing a rule</h2>
+      <p>A hand-written rule has thresholds. Someone must tune them again every time the Wi-Fi, the belt speed or the server changes. <b>The agent re-tunes itself</b> from the results it gets.</p>
+      <p>Ping cannot see an overloaded server or a capped connection: a tiny ping packet still flies through. <b>The 2-second test photo can.</b> A rule that trusts ping misses half or all of the boxes in those faults.</p>
+      <p>A rule can also send only the unsure boxes to the cloud. But how unsure is unsure enough depends on the network, the time left and the calls left. The agent learns that from results.</p>
+      <p>It first practises on 2.4 million simulated boxes, each one a real photo, then keeps learning on the real belt.</p>
+    </article>
+    <article>
+      <h2>What is proven, and what is not</h2>
+      <ul>
+        <li class="yes"><span><b>Done.</b> Complete system, strong hand-written rule to compare against, every result re-runnable.</span></li>
+        <li class="yes"><span><b>Done.</b> In simulation it matches or beats that rule on average, and recovers by itself from faults it never saw.</span></li>
+        <li class="no" id="howBelt"><span><b>Not yet.</b> Results on the real belt. Until then every decision result is simulated.</span></li>
+        <li class="no" id="howEspReal"><span><b>Not yet.</b> ESP32 speed measured on the real board. Until then its time is an estimate.</span></li>
+        <li class="no" id="howPhotos"><span><b>Not yet.</b> Models trained on real photos. The shipped ones learned from computer-drawn boxes.</span></li>
+        <li class="no"><span><b>Not claimed.</b> That the idea is new. Offloading with Q-learning is well known. The contribution is the deadline-driven, cost-based design and the test against a strong rule.</span></li>
+      </ul>
+    </article>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+/* canvas colours come from the CSS variables, so the drawings follow the light / dark theme */
+let C={};
+function pal(){const cs=getComputedStyle(document.documentElement),v=n=>cs.getPropertyValue(n).trim();
+  C={white:v("--fg"),bg:v("--bg"),cyan:v("--cyan"),cyanFill:v("--cyan-fill"),onCyan:v("--on-cyan"),red:v("--red"),
+     ink:v("--ink"),soft:v("--soft"),faint:v("--faint"),rule:v("--rule"),rule2:v("--rule2"),
+     fg:v("--fg-rgb"),bgc:v("--bg-rgb"),cy:v("--cyan-rgb")}}
+pal();
+const DIN='"Bahnschrift","DIN Alternate","Roboto Condensed","Arial Narrow",system-ui,sans-serif';
+const SCEN=[["good","Good"],["busy","Busy"],["bad","Bad"],["bwcap","Capped"],["lossy","Lossy"],["stalls","Stalls"],["down","Down"]];
+const still=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;
+let ctl={},S=null;
+
+/* ------------------------------------------------------------------ API (key kept in this browser only) */
+let KEY="";
+try{const u=new URLSearchParams(location.search).get("key");
+  if(u){localStorage.setItem("conveyorKey",u);history.replaceState(null,"",location.pathname)}
+  KEY=localStorage.getItem("conveyorKey")||""}catch(e){}
+function needKey(){setStat("stPi","stPiV","API key needed","alert");$("keyBox").classList.add("open")}
+const PLACES=["EDGE","GATEWAY","CLOUD"];
+function api(url,opt){opt=opt||{};opt.headers=Object.assign({},opt.headers||{},KEY?{"X-API-Key":KEY}:{});
+  return fetch(url,opt).then(r=>{if(r.status===401){needKey();throw new Error("401")}return r})}
+function post(url,body){return api(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(r=>r.json())}
+function setCtl(upd){return post("/api/control",upd).then(c=>{ctl=c;renderCtl()}).catch(()=>{})}
+$("btnKey").onclick=()=>{$("keyBox").classList.toggle("open");$("keyIn").value=KEY;$("keyIn").focus()};
+$("keySave").onclick=()=>{KEY=$("keyIn").value.trim();try{localStorage.setItem("conveyorKey",KEY)}catch(e){}$("keyBox").classList.remove("open");tick()};
+$("keyIn").onkeydown=e=>{if(e.key==="Enter")$("keySave").click()};
+$("btnCsv").onclick=()=>api("/api/export.csv").then(r=>r.blob()).then(b=>{const a=document.createElement("a");
+  a.href=URL.createObjectURL(b);a.download="boxes.csv";document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000)}).catch(()=>{});
+
+SCEN.forEach(([k,l])=>{const b=document.createElement("button");b.textContent=l;b.dataset.k=k;
+  b.onclick=()=>setCtl({scenario:k});$("scenBtns").appendChild(b)});
+[[0,"No limit"],[30,"30"],[15,"15"],[8,"8"],[4,"4"]].forEach(([k,l])=>{const b=document.createElement("button");b.textContent=l;b.dataset.k=k;
+  b.onclick=()=>setCtl({cloud_per_min:k});$("budBtns").appendChild(b)});
+$("btnSlow").onclick=()=>setCtl({server_slow:!ctl.server_slow});
+$("btnStress").onclick=()=>setCtl({gw_stress:!ctl.gw_stress});
+$("belt").oninput=e=>$("beltV").textContent=(+e.target.value).toFixed(2);
+$("belt").onchange=e=>setCtl({belt_duty:+e.target.value});
+$("policy").onchange=e=>setCtl({policy:e.target.value});
+$("btnReset").onclick=()=>post("/api/reset").then(tick).catch(()=>{});
+function renderCtl(){
+  const sc=ctl.scenario||(S&&S.status&&S.status.scenario)||"";
+  document.querySelectorAll("#scenBtns button").forEach(b=>b.classList.toggle("active",b.dataset.k===sc));
+  $("btnSlow").classList.toggle("active",!!ctl.server_slow);
+  $("btnStress").classList.toggle("active",!!ctl.gw_stress);
+  const bd=S&&S.status&&S.status.budget?S.status.budget.per_min:ctl.cloud_per_min;
+  document.querySelectorAll("#budBtns button").forEach(b=>b.classList.toggle("active",bd!=null&&+b.dataset.k===Math.round(+bd)));
+}
+
+/* ------------------------------------------------------------------ helpers */
+function setStat(id,vid,text,cls){$(vid).textContent=text;$(id).className="stat"+(cls?" "+cls:"")}
+function pct(a,b){return b?(100*a/b).toFixed(1)+"%":"0%"}
+function ms(v){return v==null?"?":Math.round(v)+" ms"}
+function fit(c,hCss){const r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;
+  if(!c.dataset.h)c.dataset.h=hCss||c.getAttribute("height")||r.height;
+  const h=+c.dataset.h,w2=Math.round(r.width*d),h2=Math.round(h*d);
+  if(c.width!==w2||c.height!==h2){c.width=w2;c.height=h2;c.style.height=h+"px"}
+  const x=c.getContext("2d");x.setTransform(d,0,0,d,0,0);return [x,r.width,h]}
+function esc(s){return String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]))}
+
+/* ================================================================== THE LINE (live plan view of the belt) */
+const L={boxes:[],seen:new Set(),primed:false,lastSpawn:0,armT:-1e9,beltX:0,lastFrame:0,pulsePi:-1e9,pulseEsp:-1e9,
+         last:null,shipped:0,binned:0};
+function lineGeom(W,H){
+  const x0=Math.max(24,W*0.03),x1=W-Math.max(24,W*0.03),bh=Math.min(78,H*0.20),yb=H*0.47;
+  const xc=x0+(x1-x0)*0.30,xa=x0+(x1-x0)*0.74;
+  return {x0,x1,yb,bh,xc,xa,ym:yb+bh/2,cloudX:xc+(xa-xc)*0.50,cloudY:H*0.12,piY:yb+bh+44,bs:Math.min(46,bh*0.62)};
+}
+function ingest(recent){
+  if(!recent)return;
+  if(!L.primed){recent.forEach(e=>L.seen.add(e.t));L.primed=true;L.last=recent[0]||null;return}
+  const fresh=recent.filter(e=>!L.seen.has(e.t)).reverse();
+  const now=performance.now();
+  fresh.forEach(e=>{L.seen.add(e.t);
+    const t0=Math.max(now,L.lastSpawn+260);L.lastSpawn=t0;
+    const b={e,t0,img:null,done:false};
+    if(e.thumb){const im=new Image();im.onload=()=>{b.img=im};im.src="data:image/jpeg;base64,"+e.thumb}
+    L.boxes.push(b);L.last=e});
+  if(L.seen.size>4000){L.seen=new Set(recent.map(e=>e.t))}
+  if(L.boxes.length>24)L.boxes.splice(0,L.boxes.length-24);
+}
+function hatch(x,bx,by,s,col){x.save();x.beginPath();x.rect(bx,by,s,s);x.clip();x.strokeStyle=col;x.lineWidth=1.5;
+  for(let k=-s;k<s*2;k+=7){x.beginPath();x.moveTo(bx+k,by+s);x.lineTo(bx+k+s,by);x.stroke()}x.restore()}
+function drawLine(now){
+  const c=$("cLine");const [x,W,H]=fit(c,c.getBoundingClientRect().height||410);
+  const g=lineGeom(W,H),st=(S&&S.status)||{},live=S&&S.status_age_s!=null&&S.status_age_s<5;
+  x.clearRect(0,0,W,H);x.textBaseline="alphabetic";
+  const dt=Math.min(60,now-(L.lastFrame||now));L.lastFrame=now;
+  const lastE=L.last,bud=lastE&&lastE.budget_ms?lastE.budget_ms:500;
+  const winMs=Math.max(1100,Math.min(2600,bud*2.6));           // on-screen time to cross camera -> arm
+  const v=(g.xa-g.xc)/winMs;                                    // px per ms (faster belt = shorter deadline)
+  if(live&&!still)L.beltX=(L.beltX+v*dt)%28;
+
+  /* belt */
+  x.fillStyle=`rgba(${C.fg},.04)`;x.fillRect(g.x0,g.yb,g.x1-g.x0,g.bh);
+  x.strokeStyle=C.rule;x.lineWidth=1;
+  x.beginPath();x.moveTo(g.x0,g.yb+.5);x.lineTo(g.x1,g.yb+.5);x.moveTo(g.x0,g.yb+g.bh-.5);x.lineTo(g.x1,g.yb+g.bh-.5);x.stroke();
+  x.strokeStyle=C.rule2;x.beginPath();
+  for(let px=g.x0+L.beltX;px<g.x1;px+=28){x.moveTo(px,g.yb+5);x.lineTo(px,g.yb+g.bh-5)}x.stroke();
+  [g.x0,g.x1].forEach(rx=>{x.strokeStyle=C.faint;x.strokeRect(rx-5,g.yb-5,10,g.bh+10)});
+
+  /* reject bin under the arm */
+  const binX=g.xa-10,binW=Math.min(120,(g.x1-g.xa)*0.7),binY=g.yb+g.bh+18,binH=Math.max(30,Math.min(64,H-binY-30));
+  x.setLineDash([4,4]);x.strokeStyle=C.faint;x.strokeRect(binX,binY,binW,binH);x.setLineDash([]);
+  x.font="12px "+DIN;x.fillStyle=C.soft;x.textAlign="left";x.fillText("Reject bin",binX,binY+binH+16);
+  const A=(S&&S.all)||{};
+  if(A.n){x.font="600 22px "+DIN;x.fillStyle=C.ink;x.textAlign="center";x.fillText(String(A.rejected||0),binX+binW/2,binY+binH/2+8);
+    if(g.x1-g.xa>230){x.textAlign="right";x.font="600 22px "+DIN;x.fillStyle=C.ink;x.fillText(String((A.n||0)-(A.rejected||0)),g.x1-4,g.yb-34);
+    x.font="12px "+DIN;x.fillStyle=C.soft;x.fillText("passed on",g.x1-4,g.yb-16)}
+    x.textAlign="right";x.font="12px "+DIN;
+    if(A.missed){x.fillStyle=C.red;x.fillText(A.missed+" of them unchecked",g.x1-4,g.yb+g.bh+18)}
+    x.textAlign="left"}
+
+  /* camera station (IR 1) */
+  x.strokeStyle=C.soft;x.setLineDash([2,4]);x.beginPath();x.moveTo(g.xc,g.yb-12);x.lineTo(g.xc,g.yb+g.bh+12);x.stroke();x.setLineDash([]);
+  const fov=g.bs+16;x.strokeStyle=C.white;x.lineWidth=1.2;
+  const fx=g.xc-fov/2,fy=g.ym-fov/2,cl=9;
+  [[fx,fy,1,1],[fx+fov,fy,-1,1],[fx,fy+fov,1,-1],[fx+fov,fy+fov,-1,-1]].forEach(([px,py,sx,sy])=>{
+    x.beginPath();x.moveTo(px+sx*cl,py);x.lineTo(px,py);x.lineTo(px,py+sy*cl);x.stroke()});
+  x.fillStyle=C.ink;x.textAlign="center";x.font="600 13px "+DIN;x.fillText("Camera",g.xc,g.yb-20);
+
+  /* reject arm (IR 2) */
+  x.strokeStyle=C.soft;x.lineWidth=1;x.setLineDash([2,4]);x.beginPath();x.moveTo(g.xa,g.yb-12);x.lineTo(g.xa,g.yb+g.bh+12);x.stroke();x.setLineDash([]);
+  const sw=Math.max(0,1-Math.abs((now-L.armT)-190)/190),ang=sw*1.25,armLen=g.bh+6,pvx=g.xa+6,pvy=g.yb-9;
+  x.strokeStyle=C.white;x.lineWidth=3;x.beginPath();x.moveTo(pvx,pvy);x.lineTo(pvx+armLen*Math.cos(ang),pvy+armLen*Math.sin(ang));x.stroke();
+  x.fillStyle=C.white;x.beginPath();x.arc(pvx,pvy,4,0,7);x.fill();
+  x.fillStyle=C.ink;x.textAlign="center";x.font="600 13px "+DIN;x.fillText("Reject arm",g.xa+30,g.yb-20);
+
+  /* deadline dimension line */
+  const yd=g.yb-44;x.strokeStyle=C.faint;x.lineWidth=1;
+  x.beginPath();x.moveTo(g.xc,yd);x.lineTo(g.xa,yd);x.moveTo(g.xc,yd-5);x.lineTo(g.xc,yd+5);x.moveTo(g.xa,yd-5);x.lineTo(g.xa,yd+5);x.stroke();
+  const dl=lastE&&lastE.budget_ms?ms(lastE.budget_ms)+" to decide":"time to decide";
+  x.font="600 14px "+DIN;const tw=x.measureText(dl).width+16;
+  x.fillStyle=C.bg;x.fillRect((g.xc+g.xa)/2-tw/2,yd-9,tw,18);x.fillStyle=C.ink;x.textAlign="center";x.fillText(dl,(g.xc+g.xa)/2,yd+5);
+
+  /* cloud node + link */
+  const a=(S&&S.all)||{},srvOk=st.server_ok!==false,linkCol=live&&!srvOk?C.red:C.cyan;
+  const cT="Cloud server, big model",cS=live?(srvOk?`answers in ${ms(st.cloud_ms)}, ping ${ms(st.rtt_ms)}`:"not answering"):"not connected";
+  x.font="600 14px "+DIN;let cw=x.measureText(cT).width;x.font="12px "+DIN;cw=Math.ceil(Math.max(cw,x.measureText(cS).width,150))+26;
+  const chh=52,cx0=g.cloudX-cw/2,cy0=Math.max(8,g.cloudY-chh/2);
+  x.strokeStyle=linkCol;x.globalAlpha=live?0.55:0.25;x.setLineDash([3,5]);x.lineWidth=1;
+  x.beginPath();x.moveTo(g.xc,g.ym-fov/2-2);x.lineTo(g.xc,cy0+chh/2);x.lineTo(cx0,cy0+chh/2);x.stroke();
+  x.beginPath();x.moveTo(cx0+cw,cy0+chh/2);x.lineTo(g.xa-40,cy0+chh/2);x.lineTo(g.xa-40,g.yb-2);x.stroke();
+  x.setLineDash([]);x.globalAlpha=1;
+  x.fillStyle=C.bg;x.fillRect(cx0,cy0,cw,chh);x.strokeStyle=linkCol;x.lineWidth=1.2;x.strokeRect(cx0+.5,cy0+.5,cw-1,chh-1);
+  x.textAlign="left";x.fillStyle=linkCol;x.font="600 14px "+DIN;x.fillText(cT,cx0+13,cy0+21);
+  x.fillStyle=live&&!srvOk?C.red:C.soft;x.font="12px "+DIN;x.fillText(cS,cx0+13,cy0+39);
+
+  /* gateway node (under the camera) */
+  const narrow=W<560;
+  const pT=narrow?"Gateway laptop":"Gateway laptop, small model",pS=live?`${st.gw_ms!=null?ms(st.gw_ms)+(narrow?"":" per photo"):"load "+Math.round(100*(st.cpu||0))+"%"}, ${st.second_opinion?(narrow?"first":"checks every box first"):(narrow?"":"checked ")+pct(a.gateway||0,a.n||0)+" of boxes"}`:"not connected";
+  x.font="600 14px "+DIN;let pw=x.measureText(pT).width;x.font="12px "+DIN;pw=Math.ceil(Math.max(pw,x.measureText(pS).width,130))+26;
+  const ph=46,px0=Math.max(g.x0,Math.min(g.xc-pw/2,binX-pw-14)),py0=g.yb+g.bh+24;
+  const gwSlow=live&&st.gw_stress;
+  x.strokeStyle=C.faint;x.lineWidth=1;x.beginPath();x.moveTo(g.xc,g.ym+fov/2+2);x.lineTo(g.xc,py0);x.stroke();
+  const pp=(now-L.pulsePi)/500;
+  if(pp>=0&&pp<1&&!still){x.strokeStyle=`rgba(${C.fg},${0.7*(1-pp)})`;x.strokeRect(px0-8*pp,py0-8*pp,pw+16*pp,ph+16*pp)}
+  x.fillStyle=C.bg;x.fillRect(px0,py0,pw,ph);x.strokeStyle=gwSlow?C.red:C.white;x.lineWidth=1.2;x.strokeRect(px0+.5,py0+.5,pw-1,ph-1);
+  x.textAlign="left";x.fillStyle=gwSlow?C.red:C.ink;x.font="600 14px "+DIN;x.fillText(pT,px0+13,py0+20);
+  x.fillStyle=gwSlow?C.red:C.soft;x.font="12px "+DIN;x.fillText(gwSlow?"overloaded, "+ms(st.gw_ms)+(narrow?"":" per photo"):pS,px0+13,py0+36);
+  /* ESP32 node (between the gateway and the reject bin): runs the belt, has the tiny model */
+  const es=st.esp32||{},eOn=live&&es.alive,eT="ESP32, tiny model",
+        eS=!live?"not connected":es.mode==="no model"?"runs the belt, no model yet":
+           `${es.mode==="real"?"on USB":"pretend board"}, ${ms(st.edge_ms)} per photo, checked ${pct(a.edge||0,a.n||0)}`;
+  x.font="600 14px "+DIN;let ew=x.measureText(eT).width;x.font="12px "+DIN;ew=Math.ceil(Math.max(ew,x.measureText(eS).width,120))+26;
+  const eGap=binX-(px0+pw),eShow=eGap>ew+44,ex0=px0+pw+(eGap-ew)/2,ey0=py0;
+  if(eShow){
+    x.strokeStyle=C.faint;x.lineWidth=1;x.setLineDash([3,4]);
+    x.beginPath();x.moveTo(px0+pw,ey0+ph/2);x.lineTo(ex0,ey0+ph/2);x.stroke();                      /* USB cable */
+    x.beginPath();x.moveTo(ex0+ew/2,ey0);x.lineTo(ex0+ew/2,g.yb+g.bh+2);x.stroke();x.setLineDash([]);  /* it drives the belt */
+    x.font="11px "+DIN;x.fillStyle=C.faint;x.textAlign="center";x.fillText("USB",(px0+pw+ex0)/2,ey0+ph/2-5);
+    const ep=(now-L.pulseEsp)/500;
+    if(ep>=0&&ep<1&&!still){x.strokeStyle=`rgba(${C.fg},${0.7*(1-ep)})`;x.strokeRect(ex0-8*ep,ey0-8*ep,ew+16*ep,ph+16*ep)}
+    x.fillStyle=C.bg;x.fillRect(ex0,ey0,ew,ph);x.strokeStyle=live&&!eOn&&es.mode!=="no model"?C.red:C.white;x.lineWidth=1.2;
+    x.setLineDash([5,3]);x.strokeRect(ex0+.5,ey0+.5,ew-1,ph-1);x.setLineDash([]);
+    x.textAlign="left";x.fillStyle=C.ink;x.font="600 14px "+DIN;x.fillText(eT,ex0+13,ey0+20);
+    x.fillStyle=C.soft;x.font="12px "+DIN;x.fillText(eS,ex0+13,ey0+36)}
+  /* legend, bottom left */
+  const lg=[[C.white,2,"checked on the ESP32"],[C.white,0,"checked on the gateway"],[C.cyan,0,"checked by the cloud"],[C.white,1,"judged damaged"],[C.red,0,"missed, passed unchecked"]];
+  let lx=g.x0,ly=H-12;x.font="12px "+DIN;
+  if(px0-g.x0>190)lg.forEach(([col,ht,txt],i)=>{const yy=ly-(lg.length-1-i)*17;
+    if(ht===1)hatch(x,lx,yy-10,11,`rgba(${C.fg},.8)`);x.strokeStyle=col;x.lineWidth=1.6;if(ht===2)x.setLineDash([3,2]);x.strokeRect(lx,yy-10,11,11);x.setLineDash([]);
+    x.fillStyle=C.soft;x.fillText(txt,lx+19,yy)});
+
+  /* boxes */
+  const xin=g.x0-g.bs,xout=g.x1+g.bs;
+  for(const b of L.boxes){
+    if(b.done)continue;
+    const e=b.e,t=now-b.t0;if(t<0)continue;
+    const bw=Math.max(1100,Math.min(2600,(e.budget_ms||500)*2.6)),bv=(g.xa-g.xc)/bw;
+    const tCam=(g.xc-xin)/bv,tArm=tCam+bw;
+    const late=e.on_time===false,noPhoto=!PLACES.includes(e.action);
+    let f=(e.latency_ms||0)/(e.budget_ms||500);f=late?Math.max(1.12,Math.min(1.35,f)):Math.max(0.06,Math.min(0.94,f));
+    const tAns=tCam+bw*f,known=t>=tAns&&!late&&!noPhoto,rej=!!e.rejected&&!late;
+    let bx=xin+bv*t,by=g.ym,alpha=1;
+    if(rej&&t>=tArm){const q=(t-tArm)/520;bx=g.xa+14*Math.min(1,q);by=g.ym+(binY+binH/2-g.ym)*Math.min(1,q*q*1.1);
+      if(!b.arm){b.arm=true;L.armT=now}
+      if(q>1){alpha=Math.max(0,1-(q-1)*1.6);if(alpha<=0){b.done=true;continue}}}
+    else if(bx>g.x1-g.bs){alpha=Math.max(0,(xout-bx)/(g.bs*2));if(bx>=xout){b.done=true;continue}}
+    if(e.action==="GATEWAY"&&!b.pi&&t>=tCam){b.pi=true;L.pulsePi=now}
+    if(e.action==="EDGE"&&!b.pi&&t>=tCam){b.pi=true;L.pulseEsp=now}
+    if(t>=tCam&&t<tCam+150&&!still){x.fillStyle=`rgba(255,255,255,${0.22*(1-(t-tCam)/150)})`;x.fillRect(fx,fy,fov,fov)}
+    const s=g.bs,qx=bx-s/2,qy=by-s/2;
+    x.globalAlpha=alpha;
+    if(b.img){x.drawImage(b.img,qx,qy,s,s)}else{x.fillStyle=C.rule;x.fillRect(qx,qy,s,s)}
+    if(!known&&!late){x.fillStyle=`rgba(${C.bgc},.48)`;x.fillRect(qx,qy,s,s)}
+    let col=C.faint;
+    if(late&&t>=tArm)col=C.red;else if(known)col=e.action==="CLOUD"?C.cyan:C.white;
+    if(known&&e.verdict==="damaged")hatch(x,qx,qy,s,"rgba(255,255,255,.75)");
+    x.strokeStyle=col;x.lineWidth=late&&t>=tArm?2.5:2;
+    if(known&&e.action==="EDGE")x.setLineDash([5,3]);x.strokeRect(qx,qy,s,s);x.setLineDash([]);
+    /* the race: answer progress bar under the box */
+    if(t>=tCam&&t<Math.max(tArm,tAns)+500&&!noPhoto){
+      const pr=Math.min(1,(t-tCam)/(tAns-tCam)),barCol=e.action==="CLOUD"?C.cyan:C.white;
+      x.fillStyle=C.rule;x.fillRect(qx,qy+s+5,s,3);x.fillStyle=late&&t>=tArm?C.red:barCol;x.fillRect(qx,qy+s+5,s*pr,3)}
+    x.font="600 12px "+DIN;x.textAlign="center";
+    if(late&&t>=tArm){x.fillStyle=C.red;x.fillText("missed",bx,qy-7)}
+    else if(known){x.fillStyle=col;x.fillText(e.verdict==="damaged"?"damaged":"good",bx,qy-7)}
+    x.globalAlpha=1;
+    /* shrunken photo travelling over the USB cable to the ESP32 and the answer coming back */
+    if(e.action==="EDGE"&&eShow&&t>=tCam&&t<tAns&&!still){
+      const q=(t-tCam)/(tAns-tCam),u=q<0.5?q/0.5:(1-q)/0.5;
+      x.fillStyle=C.white;x.beginPath();x.arc(px0+pw+(ex0-(px0+pw))*u,ey0+ph/2,3.5,0,7);x.fill()}
+    /* photo travelling to the cloud and the answer coming back */
+    if(e.action==="CLOUD"&&t>=tCam&&t<tAns&&!still){
+      const q=(t-tCam)/(tAns-tCam),yl=cy0+chh/2;let dx,dy;
+      if(q<0.5){const u=q/0.5,up=(g.ym-fov/2-2)-yl,acr=cx0-g.xc,tot=up+acr,dd=u*tot;
+        if(dd<up){dx=g.xc;dy=(g.ym-fov/2-2)-dd}else{dx=g.xc+(dd-up);dy=yl}}
+      else{const u=(q-0.5)/0.5,acr=(g.xa-40)-(cx0+cw),dn=(g.yb-2)-yl,tot=acr+dn,dd=u*tot;
+        if(dd<acr){dx=cx0+cw+dd;dy=yl}else{dx=g.xa-40;dy=yl+(dd-acr)}}
+      x.fillStyle=C.cyanFill;x.shadowColor=C.cyanFill;x.shadowBlur=12;x.beginPath();x.arc(dx,dy,4,0,7);x.fill();x.shadowBlur=0}
+  }
+  if(!live){x.fillStyle=C.soft;x.textAlign="center";x.font="600 15px "+DIN;
+    x.fillText("The line is stopped. No gateway is reporting.",(g.x0+g.x1)/2,g.ym+5)}
+  x.textAlign="left";
+}
+function loop(now){if(!document.hidden&&view==="live")drawLine(now);requestAnimationFrame(loop)}
+
+/* ------------------------------------------------------------------ plain-words explanation of the last box */
+function why(e){
+  const w=$("why");
+  if(!e){w.className="why";return}
+  $("whyId").textContent="Box "+e.box_id;
+  const late=e.on_time===false;w.className="why"+(late?" alert":"");
+  const spare=e.slack_ms,cl=ms(e.cloud_ms),bud=ms(e.budget_ms),lat=ms(e.latency_ms);
+  const share=e.budget_ms?Math.round(100*e.latency_ms/e.budget_ms):null;
+  let t;
+  if(e.first){
+    const sure=e.conf_name||"sure",gv=esc(e.gw_verdict||e.verdict),calls=e.calls_left>=90?"no limit on cloud calls":`${Math.floor(e.calls_left)} cloud call${Math.floor(e.calls_left)===1?"":"s"} left`;
+    t=`Gateway's model says <b>${gv}</b> and is <b>${esc(sure)}</b>. `;
+    if(late){t=`<b>The gateway's own model answered too late. The box passed unchecked.</b>`}
+    else if(!e.asked){
+      t+=e.can_cloud===false?`No cloud call left, so `:(e.conf>=3?`Cloud answering in ${cl} with ${bud} left (${calls}): not worth a call now, so `:`Not worth a cloud call, so `);
+      t+=`<b>the verdict is kept</b>, ${lat} after the photo.${e.rejected?" Pushed off.":""}`}
+    else if(e.cloud_late){t+=`<span class="c">Cloud asked for a second opinion</span> (${calls}). <b>The cloud answer came too late, so the gateway's verdict was used.</b> The box was still checked.${e.rejected?" Pushed off.":""}`}
+    else{t+=`<span class="c">Cloud asked for a second opinion</span> (${calls}). The cloud says <b>${esc(e.verdict)}</b> after ${lat}`+
+      (e.changed?`: <b>verdict changed</b>.`:`: same verdict.`)+(e.rejected?" Pushed off.":"")}
+  }else if(e.action==="CLOUD"){
+    t=`${bud} before the arm, cloud answering in ${cl}, so <b>${Math.round(spare)} ms to spare</b>. <span class="c">Sent to the cloud.</span> `;
+    t+=late?`<b>The answer took ${lat} and came too late. The box passed unchecked.</b>`
+           :`Answer back in <b>${lat}</b>${share!=null?`, ${share}% of the time available`:""}. Verdict: <b>${esc(e.verdict)}</b>${e.rejected?", pushed off":""}.`;
+  }else if(e.action==="GATEWAY"){
+    t=spare!=null&&spare<60?`Cloud answering in ${cl} with ${bud} before the arm leaves <b>${Math.round(spare)} ms to spare</b>. Too risky. `
+                             :`${bud} before the arm, cloud answering in ${cl}. `;
+    t+=`<b>Checked on the gateway</b> `;
+    t+=late?`<b>but the answer took ${lat} and came too late.</b>`:`in <b>${lat}</b>. Verdict: <b>${esc(e.verdict)}</b>${e.rejected?", pushed off":""}.`;
+  }else if(e.action==="EDGE"){
+    const gw=e.gw_ms!=null?ms(e.gw_ms):"too long";
+    t=`${bud} before the arm. Cloud answering in ${cl}, the gateway's own model needs ${gw}. `;
+    if(e.fallback){t+=`Sent to the ESP32, <b>which did not answer, so the gateway took over</b>`}
+    else{t+=`<b>Checked on the ESP32</b>${e.emulated?" (pretend board)":""} `}
+    t+=late?` <b>but the answer took ${lat} and came too late.</b>`:` in <b>${lat}</b>. Verdict: <b>${esc(e.verdict)}</b>${e.rejected?", pushed off":""}.`;
+  }else{t=`<b>No photo was taken, so the box passed unchecked.</b>`}
+  if(e.truth&&!late&&e.verdict&&e.truth!==e.verdict)t+=` It was actually ${esc(e.truth)}.`;
+  $("whyTxt").innerHTML=t;
+}
+
+/* ------------------------------------------------------------------ one-line state of the line (top left of the belt) */
+function headline(s){
+  const h=$("head"),live=s.status_age_s!=null&&s.status_age_s<5,a=s.last100||{};
+  if(!live||!a.n||demo){h.hidden=true;return}
+  const miss=a.missed||0,cl=a.cloud||0,gw=a.gateway||0,ed=a.edge||0;let big,cls="";
+  if(miss/a.n>0.02){big="Boxes are passing unchecked";cls=" alert"}
+  else if(ed>cl&&ed>gw){big="Only the ESP32 is fast enough right now"}
+  else if(a.first>a.n/2){big=a.asked?(miss?"Nearly every box checked in time":"Every box checked, cloud asked for the unsure ones"):"Every box checked on the gateway, cloud not worth asking now"}
+  else if(gw>cl){big="Working on the gateway to keep every box on time"}
+  else{big=miss?"Nearly every box checked in time":"Every box checked in time"}
+  h.hidden=false;h.className="head"+cls;$("headBig").textContent=big;
+  $("headSmall").textContent=a.first>a.n/2?`Last ${a.n} boxes: gateway checked ${a.first} first, cloud asked for ${a.asked||0} (${a.changed||0} verdicts changed, ${a.cloud_late||0} answers late), ${ed} on the ESP32, ${miss} missed.`:
+    `Last ${a.n} boxes: ${cl} by the cloud, ${gw} on the gateway, ${ed} on the ESP32, ${miss} missed.`;
+}
+
+/* ------------------------------------------------------------------ pages */
+let view="live";
+function show(v){view=["live","results","how"].includes(v)?v:"live";
+  document.querySelectorAll(".view").forEach(el=>el.classList.toggle("active",el.id==="view-"+view));
+  document.querySelectorAll(".tabs button[data-v]").forEach(b=>b.classList.toggle("active",b.dataset.v===view));
+  if(view==="results"||view==="how")loadResults();
+  if(view==="live"){const c=$("cLine");delete c.dataset.h;c.style.height="";tick()}
+  try{history.replaceState(null,"","#"+view)}catch(e){}}
+document.querySelectorAll(".tabs button[data-v]").forEach(b=>b.onclick=()=>show(b.dataset.v));
+function setTheme(t,save){
+  document.documentElement.dataset.theme=t;pal();
+  $("btnTheme").textContent=t==="light"?"Dark theme":"Light theme";
+  $("qNote").textContent=`Each cell is one situation. Cyan means ask the cloud, ${t==="light"?"black":"white"} means keep the gateway's verdict, striped the ESP32. Drawn for a box like the last one. The outlined cell is the last box.`;
+  if(save)try{localStorage.setItem("conveyorTheme",t)}catch(e){}
+  if(S&&view==="live"){drawDecisions(S.series||[]);drawNet(S.series||[]);
+    drawQ(S.status||{},S.q,S.visits,S.recent&&S.recent.length?S.recent[0].state:null)}
+}
+$("btnTheme").onclick=()=>setTheme(document.documentElement.dataset.theme==="light"?"dark":"light",true);
+$("btnFs").onclick=()=>{const d=document;if(d.fullscreenElement)d.exitFullscreen();else if(d.documentElement.requestFullscreen)d.documentElement.requestFullscreen().catch(()=>{})};
+
+/* ------------------------------------------------------------------ results page (reads /api/results) */
+const POL=["Q-learning (online)","Q-learning (frozen)","Confidence rule","Confidence rule + reserve","Ask the cloud always","Adaptive rule","Always-Gateway","Threshold rule","Deadline rule","Always-Cloud","Always-Edge"];
+const POLNAME={"Q-learning (online)":"Q-learning, learning live","Q-learning (frozen)":"Q-learning, frozen","Adaptive rule":"Adaptive rule",
+  "Confidence rule":"Confidence rule","Confidence rule + reserve":"Confidence rule + reserve","Ask the cloud always":"Always ask the cloud too","Best possible (knows the answers)":"Best possible (knows the answers)",
+  "Always-Gateway":"Always the gateway","Always-Edge":"Always the ESP32","Always-Cloud":"Always the cloud","Threshold rule":"Threshold rule","Deadline rule":"Deadline rule"};
+const SCN={"good":"good","busy":"busy","bad":"bad","fast+busy":"fast belt","gateway-busy":"gateway busy","gateway-overload":"gateway choked","bw-cap":"capped","server-slow":"server slow","lossy":"lossy","wifi-stalls":"stalls"};
+const isQ=p=>String(p).startsWith("Q-learning");
+const f2=v=>v==null?"n/a":(+v).toFixed(2),f1=v=>v==null?"n/a":(+v).toFixed(1);
+function tint(v,max){const a=Math.max(0,Math.min(1,v/max));return a<0.01?"":`background:rgba(255,59,48,${(0.10+0.55*a).toFixed(2)})`}
+let RES=null,resT=0;
+function loadResults(){
+  if(RES&&Date.now()-resT<20000){renderResults();return}
+  api("/api/results").then(r=>{if(!r.ok)throw new Error("old");return r.json()}).then(d=>{RES=d;resT=Date.now();renderResults()})
+   .catch(e=>{if(String(e&&e.message)==="401")return;
+     $("resBanner").innerHTML="<b>The server is an older version.</b> Stop it (Enter in the black window) and double-click START_DEMO again, then reload this page.";$("resBody").innerHTML=""})}
+function renderResults(){
+  const d=RES;if(!d)return;const H=[];
+  const m=d.models||{};
+  if(m.edge&&m.edge.accuracy!=null)$("howEsp").textContent=Math.round(100*m.edge.accuracy)+"% right";
+  if(m.gateway&&m.gateway.accuracy!=null)$("howEdge").textContent=Math.round(100*m.gateway.accuracy)+"% right";
+  if(m.cloud&&m.cloud.accuracy!=null)$("howCloud").textContent=Math.round(100*m.cloud.accuracy)+"% right";
+  if(d.photo_source==="public")$("howPhotos").innerHTML="<span><b>Partly.</b> The models are trained on real photographs from a public set, not yet on photos from this project's own belt.</span>";
+  if(d.photo_source==="own"){$("howPhotos").className="yes";$("howPhotos").innerHTML="<span><b>Done.</b> The models are trained on photos from this project's own belt.</span>"}
+  const tE=d.tradeoff&&d.tradeoff.tiers?d.tradeoff.tiers.find(t=>t.key==="edge"):null;
+  if(tE&&tE.real){$("howEspReal").className="yes";$("howEspReal").innerHTML=`<span><b>Done.</b> ESP32 speed measured on the real board: ${Math.round(tE.ms_median)} ms per photo including the USB cable.</span>`}
+  $("resBanner").innerHTML=d.real_results?"<b>Real-belt results exist</b> in results/REAL_RESULTS.md. The decision tables below are the simulated ones.":
+    "<b>The decision results on this page are simulated.</b> The real belt has not been measured yet. Only the first table (speed against accuracy) is measured on real photos and real machines, and it says for each row how.";
+  if(d.tradeoff&&d.tradeoff.tiers){
+    const T=d.tradeoff.tiers,mxMs=Math.max(...T.map(t=>t.ms_median)),lg=v=>Math.max(4,100*Math.log10(1+v)/Math.log10(1+mxMs));
+    H.push(`<section><h2>Speed against accuracy: the same photos at all three places</h2>
+      <p class="lead">${d.tradeoff.n} ${d.tradeoff.photo_kind==="synthetic"?"computer-drawn":d.tradeoff.photo_kind==="own"?"own-belt":"real, public"} photos, checked by the ESP32, the gateway and the cloud, each with its own cost-based cut-off (a shipped defect costs ten times a wasted good box, so every cut-off leans toward rejecting; the weaker the model, the more good boxes that costs). No belt and no agent here: this is the raw trade-off the agent has to work with. Measured ${esc(d.tradeoff.generated)}.</p>
+      <div class="scroll"><table class="mx"><tr><th></th><th>correct verdicts</th><th>damaged caught</th><th>good wrongly rejected</th><th>correct with a plain 50% cut-off</th><th style="text-align:left;min-width:190px">time per photo (median)</th><th>95% under</th><th style="text-align:left">how it was measured</th></tr>
+      ${T.map(t=>`<tr><td class="${t.key==="cloud"?"q":""}"><b>${esc(t.place)}</b><br><span style="color:var(--faint)">${esc(t.input||"")}</span></td>
+        <td>${f1(100*t.accuracy)}%</td><td>${t.recall_damaged==null?"n/a":f1(100*t.recall_damaged)+"%"}</td><td>${t.false_reject_rate==null?"n/a":f1(100*t.false_reject_rate)+"%"}</td><td style="color:var(--soft)">${t.accuracy_at_half==null?"n/a":f1(100*t.accuracy_at_half)+"%"}</td>
+        <td style="text-align:left"><span style="display:inline-block;vertical-align:middle;height:10px;width:${lg(t.ms_median).toFixed(0)}px;background:${t.key==="cloud"?"var(--cyan-fill)":"var(--fg)"};${t.real?"":"opacity:.45;"}margin-right:8px"></span>${t.ms_median<10?f1(t.ms_median):Math.round(t.ms_median)} ms</td>
+        <td>${t.ms_p95<10?f1(t.ms_p95):Math.round(t.ms_p95)} ms</td>
+        <td style="text-align:left;font-family:var(--text);font-size:12.5px;white-space:normal;color:${t.real?"var(--soft)":"var(--red)"}">${esc(t.measured)}</td></tr>`).join("")}</table></div>
+      ${(d.tradeoff.reading||[]).map(r=>`<p class="take">${esc(r)}</p>`).join("")}
+      ${(d.tradeoff.notes||[]).map(r=>`<p class="take alert">${esc(r)}</p>`).join("")}</section>`)}
+  if(d.cascade){
+    const c=d.cascade,ag=c.agreement||{},lv=(c.levels||[]).slice().reverse(),cv=c.curve||[];
+    const q=cv.find(r=>r.share_pct===25),all=cv.find(r=>r.share_pct===100),none=cv.find(r=>r.share_pct===0);
+    H.push(`<section><h2>Second opinion: which boxes are worth a cloud call</h2>
+      <p class="lead">${c.n_test} ${c.photo_kind==="own"?"own-belt":c.photo_kind==="public"?"real, public":"computer-drawn"} test photos. The gateway's model checks each one first. Its score shows how sure it is. The confidence levels were set on ${c.n_val} other photos. Measured ${esc(c.generated||"")}.</p>
+      <p class="take">The gateway's and the cloud's model give the same verdict on <b>${f1(100*ag.same_verdict)}%</b> of photos. The cloud corrects the gateway on ${f1(100*ag.cloud_fixes_gateway)}% and makes it worse on ${f1(100*ag.cloud_makes_it_worse)}%.</p>
+      <div class="scroll"><table class="mx" style="max-width:900px"><tr><th>gateway's model is</th><th>share of boxes</th><th>gateway right</th><th>cloud right</th><th>saved per cloud call</th></tr>
+      ${lv.map(r=>`<tr><td>${esc(r.name)}</td><td>${Math.round(100*r.share)}%</td><td>${r.gateway_right==null?"n/a":f1(100*r.gateway_right)+"%"}</td><td class="q">${r.cloud_right==null?"n/a":f1(100*r.cloud_right)+"%"}</td><td class="${r.gain_per_call>0.5?"best":""}">${f2(r.gain_per_call)}</td></tr>`).join("")}</table></div>
+      <div class="scroll"><table class="mx" style="max-width:900px;margin-top:14px"><tr><th>least-sure boxes sent to the cloud</th>${cv.map(r=>`<th>${r.share_pct}%</th>`).join("")}</tr>
+      <tr><td>correct verdicts</td>${cv.map(r=>`<td>${f1(100*r.accuracy)}%</td>`).join("")}</tr>
+      <tr><td>cost per box</td>${cv.map(r=>`<td>${f2(r.cost)}</td>`).join("")}</tr>
+      <tr><td style="color:var(--soft)">same share picked at random: correct</td>${cv.map(r=>`<td style="color:var(--soft)">${f1(100*r.accuracy_random)}%</td>`).join("")}</tr></table></div>
+      ${q&&all&&none?`<p class="take">Sending only the least-sure quarter to the cloud gives <b>${f1(100*q.accuracy)}%</b> correct. Sending everything gives ${f1(100*all.accuracy)}%, sending nothing ${f1(100*none.accuracy)}%. With ${c.n_test} photos a gap of about 1.5 points is within chance.</p>`:""}</section>`)}
+  if(d.e7){
+    const nets=[...new Set(d.e7.map(r=>r.network))],buds=[...new Set(d.e7.map(r=>r.cloud_calls_per_min))],ps=[...new Set(d.e7.map(r=>r.policy))];
+    H.push(`<section><h2>With fewer cloud calls allowed</h2>
+      <p class="lead">Simulated line, about 60 boxes a minute, each box a real test photo. Cost per box, lower is better. "Best possible" knows which boxes a cloud answer would fix; no real policy can know that. It shows how much room is left.</p>
+      ${nets.map(n=>`<div class="scroll"><table class="mx" style="max-width:900px;margin-bottom:12px"><tr><th>${esc(n)} network</th>${buds.map(b=>`<th>${+b===0?"no limit":b+" a minute"}</th>`).join("")}</tr>
+      ${ps.map(p=>`<tr><td class="${isQ(p)?"q":""}">${POLNAME[p]||p}</td>${buds.map(b=>{const r=d.e7.find(x=>x.network===n&&x.policy===p&&x.cloud_calls_per_min===b);
+        const best=Math.max(...d.e7.filter(x=>x.network===n&&x.cloud_calls_per_min===b&&!String(x.policy).startsWith("Best possible")).map(x=>x.reward_mean));
+        return `<td class="${r&&Math.abs(r.reward_mean-best)<1e-9?"best":""}">${r?f2(-r.reward_mean):"n/a"}</td>`}).join("")}</tr>`).join("")}</table></div>`).join("")}
+      <p class="take">The policies that use the gateway's confidence need far fewer cloud calls for the same cost. Between the confidence rules and Q-learning the winner changes from column to column: treat them as level here.</p></section>`)}
+  if(d.e1){
+    const by={};d.e1.forEach(r=>{(by[r.policy]=by[r.policy]||[]).push(r)});
+    const avg=POL.filter(p=>by[p]).map(p=>[p,by[p].reduce((a,r)=>a+r.reward_mean,0)/by[p].length]).sort((a,b)=>b[1]-a[1]);
+    const mx=Math.max(...avg.map(a=>-a[1]));
+    const q=avg.find(a=>a[0]==="Q-learning (online)"),rule=avg.filter(a=>!isQ(a[0]))[0];
+    const nScen=new Set(d.e1.map(r=>r.scenario)).size;
+    H.push(`<section><h2>Average cost per box across ${nScen} situations</h2>
+      <p class="lead">Lower is better. Each policy ran 20 times, 400 boxes each, in every situation: good, busy and bad network, fast belt, busy gateway, choked gateway on a bad network, capped bandwidth, slow server, packet loss, Wi-Fi stalls. Every box is a real test photo, the cost is what really happened to it, and all policies see the same boxes. Cloud calls are limited to the number set in the settings file (15 a minute).</p>
+      <div class="bars">${avg.map(([p,v])=>`<div class="n${isQ(p)?" q":""}">${POLNAME[p]||p}</div><div class="b${isQ(p)?" q":""}"><i style="width:${(100*-v/mx).toFixed(1)}%"></i></div><div class="v">${f2(-v)}</div>`).join("")}</div>
+      ${q&&rule?`<p class="take">Q-learning costs <b>${f2(-q[1])}</b> per box, the best hand-written rule (${POLNAME[rule[0]]}) <b>${f2(-rule[1])}</b>${avg.find(a=>a[0]==="Adaptive rule")?`, the best pick-one-place rule (adaptive) <b>${f2(-avg.find(a=>a[0]==="Adaptive rule")[1])}</b>`:""}. ${q[1]>rule[1]?`Its lead over the best rule is ${f2(q[1]-rule[1])}: small.`:`It is behind the best rule by ${f2(rule[1]-q[1])}.`}</p>`:""}</section>`);
+    const scen=[...new Set(d.e1.map(r=>r.scenario))];
+    H.push(`<section><h2>Missed boxes, situation by situation</h2>
+      <p class="lead">Percent of boxes that passed the arm unchecked. Red marks where a policy fails. The last situation (stalls) was never part of training or tuning. In "gateway choked" only the ESP32 answers in time.</p>
+      <div class="scroll"><table class="mx"><tr><th></th>${scen.map(c=>`<th>${SCN[c]||c}</th>`).join("")}</tr>
+      ${POL.filter(p=>by[p]).map(p=>`<tr><td class="${isQ(p)?"q":""}">${POLNAME[p]||p}</td>${scen.map(c=>{const r=by[p].find(x=>x.scenario===c);const v=r?100*r.miss_rate:null;
+        return `<td style="${v!=null?tint(v,40):""}">${f1(v)}</td>`}).join("")}</tr>`).join("")}</table></div></section>`);
+  }
+  if(d.e2){
+    const ch=[...new Set(d.e2.map(r=>r.change))],ps=["Threshold rule","Deadline rule","Adaptive rule","Confidence rule + reserve","Q-learning (frozen)","Q-learning (online)"].filter(p=>d.e2.some(r=>r.policy===p));
+    H.push(`<section><h2>When something breaks in the middle of a run</h2>
+      <p class="lead">Boxes 1 to 300 normal, 301 to 600 with the fault, then normal again. Nothing is re-tuned. The table shows the percent missed during the fault.</p>
+      <div class="scroll"><table class="mx"><tr><th></th>${ps.map(p=>`<th>${POLNAME[p]||p}</th>`).join("")}</tr>
+      ${ch.map(c=>`<tr><td>${esc(String(c).replace(/Laptop/g,"Cloud server"))}</td>${ps.map(p=>{const r=d.e2.find(x=>x.change===c&&x.policy===p);const v=r?r.missed_during:null;
+        return `<td style="${v!=null?tint(v,40):""}">${f1(v)}</td>`}).join("")}</tr>`).join("")}</table></div>
+      <p class="take">Rules that trust ping lose half or all of the boxes when the server is overloaded or the bandwidth is capped. The adaptive rule and the agent both survive, because both use the test photo. When the gateway chokes on a bad network, they survive by moving the work to the ESP32.</p></section>`);
+  }
+  if(d.e6&&d.e6.settings){
+    const st=d.e6.settings,rows=d.e6.rows||[];
+    const wins=st.filter(x=>x.q_minus_best_rule>0.005).length,ties=st.filter(x=>Math.abs(x.q_minus_best_rule)<=0.005).length;
+    H.push(`<section><h2>If damaged boxes are rare, or the costs are different</h2>
+      <p class="lead">Two fair objections: 30% damaged boxes is unrealistic, and the costs were chosen by us. So the whole chain was redone for each row: new model cut-offs, agent trained again, rules tuned again. Cost per box, lower is better. Compare within a row only.</p>
+      <div class="scroll"><table class="mx"><tr><th></th>${POL.map(p=>`<th>${POLNAME[p]||p}</th>`).join("")}<th>Q-learning vs best rule</th></tr>
+      ${st.map(x=>{const rs=rows.filter(r=>r.setting===x.setting);const best=Math.max(...rs.map(r=>r.reward_mean));
+        return `<tr><td>${esc(x.setting)}</td>${POL.map(p=>{const r=rs.find(y=>y.policy===p);return `<td class="${r&&Math.abs(r.reward_mean-best)<1e-9?"best":""}">${r?f2(-r.reward_mean):"n/a"}</td>`}).join("")}
+          <td class="${x.q_minus_best_rule>0?"q":""}">${x.q_minus_best_rule>0.005?f2(x.q_minus_best_rule)+" better":x.q_minus_best_rule<-0.005?f2(-x.q_minus_best_rule)+" worse":"tie"}</td></tr>`}).join("")}</table></div>
+      <p class="take">Q-learning beats the best hand-written rule in <b>${wins} of ${st.length}</b> settings${ties?` and ties in ${ties}`:""}. Where it loses, the table says so.</p></section>`);
+  }
+  if(m.edge||m.gateway||m.cloud){
+    const box=(r,t,cls)=>r?`<div class="${cls}"><h3>${t}</h3><div class="sub">${esc(String(r.arch||"").split(":")[0])}, ${r.img||"?"} px${r.params?", "+r.params.toLocaleString()+" numbers":""}, trained ${esc(r.init||"")}</div>
+      <div class="m"><span>Correct verdicts</span><b>${f1(100*r.accuracy)}%</b></div>
+      <div class="m"><span>Damaged boxes caught</span><b>${f1(100*r.recall_damaged)}%</b></div>
+      <div class="m"><span>Good boxes wrongly rejected</span><b>${f1(100*r.false_reject_rate)}%</b></div></div>`:"";
+    H.push(`<section><h2>The three models</h2>
+      <p class="lead">${d.photo_source==="own"?"Trained and measured on photos from this project's own belt.":
+        d.photo_source==="public"?`Trained and measured on real photographs from a public set: ${esc(d.photo_source_name||"public dataset")}. They are real photos, but not photos from this project's belt, so the numbers will change again on the real line.`:
+        "Measured on computer-drawn boxes, not real photos. Expect all of them to change once they are re-trained on real photos."} Each model's cut-off is set by cost: a shipped defect costs ten times a wasted good box, so the cut-offs lean toward rejecting.</p>
+      <div class="duo trio">${box(m.edge,"Tiny model on the ESP32","")}${box(m.gateway,"Small model on the gateway","")}${box(m.cloud,"Big model on the cloud server","cy")}</div>
+      ${m.edge&&m.edge.accuracy!=null&&m.edge.accuracy<0.6?`<p class="take alert">The ESP32 model is right only ${f1(100*m.edge.accuracy)}% of the time: close to guessing. It still has a use: with this cost setting, rejecting on a weak guess costs less than letting a box pass unchecked. It is a last resort, not a real inspector.</p>`:""}
+      ${m.gateway&&m.gateway.false_reject_rate>0.25?`<p class="take alert">The gateway model throws away ${f1(100*m.gateway.false_reject_rate)}% of good boxes. That is not usable on a real line${d.photo_source==="synthetic"?" and is the first thing real photos have to fix":""}.</p>`:""}
+      ${d.photo_source==="public"&&d.photo_source_cite?`<p class="note">Photo source: ${esc(d.photo_source_cite)}</p>`:""}</section>`);
+  }
+  if(d.e5){
+    H.push(`<section><h2>If the real hardware differs from the simulator</h2>
+      <p class="lead">The simulator was changed on purpose (slower gateway, slower server, different network) and nothing was re-tuned. Cost per box and percent missed over 2,000 boxes.</p>
+      <div class="scroll"><table class="mx" style="max-width:760px"><tr><th></th><th>cost per box</th><th>missed %</th></tr>
+      ${d.e5.map(r=>`<tr><td class="${isQ(r.policy)?"q":""}">${esc(String(POLNAME[r.policy]||r.policy).replace("RE-TUNED by hand (reference)","re-tuned by hand, for reference").replace("Q re-trained on real params (reference)","Q-learning re-trained, for reference"))}</td><td>${f2(-r.reward)}</td><td style="${tint(r.missed,12)}">${f2(r.missed)}</td></tr>`).join("")}</table></div>
+      <p class="take">Here the adaptive rule and the frozen agent are level, and learning live is slightly behind. No advantage is claimed for this case.</p></section>`);
+  }
+  if(d.stfg&&d.stfg.by_group){
+    const G=d.stfg.groups,P=["qlearning","eft","hub","cloud","edge","random"],PN={qlearning:"Q-learning",eft:"Greedy scheduler (EFT)",hub:"All on the hub",cloud:"All on the cloud",edge:"All on the edge",random:"Random"};
+    H.push(`<section><h2>A second, public test: scheduling whole applications</h2>
+      <p class="lead">The same kind of table-based Q-learner on a public dataset of ${d.stfg.graphs} task graphs (Synthetic Task Flow Graphs, doi ${esc(d.stfg.doi)}): it decides where each task of an application runs, edge, hub or cloud. Numbers are finish time divided by the finish time of a strong classic scheduler, so 1.00 is level with it and lower is better. Average of ${d.stfg.seeds} training runs.</p>
+      <div class="scroll"><table class="mx" style="max-width:900px"><tr><th></th>${P.map(p=>`<th>${PN[p]}</th>`).join("")}</tr>
+      ${G.map(g=>`<tr><td>${esc(g)}</td>${P.map(p=>`<td class="${p==="qlearning"?"q":""}">${f2(d.stfg.by_group[g][p])}</td>`).join("")}</tr>`).join("")}</table></div>
+      <p class="take">${esc(d.stfg.verdict)}</p>
+      <p class="take">The about-100-task graphs were used for training, so only the about-1000-task row is a fair test. The about-10-task graphs finish in a fraction of a second, so a big ratio there is a tiny amount of real time.</p></section>`)}
+  $("resBody").innerHTML=H.join("")||'<section><p class="lead">No result files were found on this server. Run the experiments, then reload.</p></section>';
+}
+
+/* ------------------------------------------------------------------ charts */
+function drawDecisions(ser){
+  const [x,W,H]=fit($("cDec"));x.clearRect(0,0,W,H);
+  const pad=62,top=8,bot=H-10,gap=(bot-top-28)/3;
+  const lane={CLOUD:top+14,GATEWAY:top+14+gap,EDGE:top+14+2*gap},laneM=bot-14;
+  x.font="12px "+DIN;x.textAlign="left";
+  x.fillStyle=C.cyan;x.fillText("Cloud",0,lane.CLOUD+4);x.fillStyle=C.ink;x.fillText("Gateway",0,lane.GATEWAY+4);
+  x.fillText("ESP32",0,lane.EDGE+4);x.fillStyle=C.faint;x.fillText("Missed",0,laneM+4);
+  x.strokeStyle=C.rule2;x.lineWidth=1;[lane.CLOUD,lane.GATEWAY,lane.EDGE,laneM].forEach(y=>{x.beginPath();x.moveTo(pad,y+.5);x.lineTo(W,y+.5);x.stroke()});
+  const n=ser.length;if(!n)return;
+  const dx=(W-pad)/Math.max(60,n);
+  ser.forEach((e,i)=>{const cx=pad+i*dx,w=Math.max(1.5,dx-0.6);
+    if(e.ok===false){x.fillStyle=C.red;x.fillRect(cx,laneM-6.5,w,13);return}
+    const y=lane[e.a];if(y==null)return;
+    if(e.a==="EDGE"){x.fillStyle=C.white;x.fillRect(cx,y-3.5,w,2.5);x.fillRect(cx,y+1,w,2.5)}       /* striped = ESP32 */
+    else{x.fillStyle=e.a==="CLOUD"?C.cyan:C.white;x.fillRect(cx,y-3.5,w,7)}});
+  const w=25;x.strokeStyle=C.cyan;x.lineWidth=2;x.globalAlpha=.85;x.beginPath();let c=0,started=false;
+  ser.forEach((e,i)=>{c+=e.a==="CLOUD"?1:0;if(i>=w)c-=ser[i-w].a==="CLOUD"?1:0;if(i<w-1)return;
+    const y=lane.EDGE-(lane.EDGE-lane.CLOUD)*c/w,cx=pad+i*dx;started?x.lineTo(cx,y):(x.moveTo(cx,y),started=true)});
+  x.stroke();x.globalAlpha=1;
+}
+function drawNet(ser){
+  const [x,W,H]=fit($("cNet"));x.clearRect(0,0,W,H);
+  const pad=44,top=10,bot=H-8;
+  const vals=ser.flatMap(e=>[e.rtt,e.cl,e.bud,e.gw]).filter(v=>v!=null);
+  const mx=Math.min(1500,Math.max(300,...vals,1));
+  x.font="12px "+DIN;x.textAlign="left";x.fillStyle=C.faint;x.strokeStyle=C.rule2;x.lineWidth=1;
+  [0,0.5,1].forEach(f=>{const y=bot-(bot-top)*f;x.beginPath();x.moveTo(pad,y+.5);x.lineTo(W,y+.5);x.stroke();
+    x.fillText(Math.round(mx*f)+(f===1?" ms":""),0,y+(f===0?0:4))});
+  if(!ser.length)return;
+  const dx=(W-pad)/Math.max(60,ser.length);
+  const Y=v=>bot-(bot-top)*Math.min(v,mx)/mx;
+  ser.forEach((e,i)=>{if(e.ok===false){x.fillStyle="rgba(255,59,48,.22)";x.fillRect(pad+i*dx,top,Math.max(1.5,dx),bot-top)}});
+  const line=(key,col,dash,lw)=>{x.strokeStyle=col;x.setLineDash(dash);x.lineWidth=lw;x.beginPath();let s=false;
+    ser.forEach((e,i)=>{const v=e[key];if(v==null)return;const y=Y(v),cx=pad+i*dx;s?x.lineTo(cx,y):(x.moveTo(cx,y),s=true)});
+    x.stroke();x.setLineDash([])};
+  line("rtt",C.faint,[],1.2);line("bud",C.white,[5,4],1.3);line("gw",C.white,[],1.6);line("cl",C.cyan,[],2);
+}
+function drawMap(m){
+  const [x,W,H]=fit($("cQ"));x.clearRect(0,0,W,H);x.textAlign="left";
+  const nr=m.rows.length,nc=m.cols.length,left=92,top=40,cw=(W-left)/nc,ch=(H-top-22)/nr;
+  x.font="12px "+DIN;x.fillStyle=C.soft;
+  const words=String(m.title).split(" ");let ln="",yy0=12;      // title on up to two lines
+  for(const w of words){if(x.measureText(ln+w).width>W-4&&ln){x.fillText(ln,0,yy0);ln="";yy0+=14}ln+=w+" "}
+  x.fillText(ln,0,yy0);
+  for(let i=0;i<nr;i++)for(let j=0;j<nc;j++){
+    const c=m.cells[i][j],cloud=c.b==="ask cloud"||c.b==="cloud",esp=c.b==="ESP32",t=c.t;
+    const yy=top+(nr-1-i)*ch,xx=left+j*cw;
+    x.fillStyle=!c.s?`rgba(${C.fg},.04)`:cloud?`rgba(${C.cy},${0.16+0.84*t})`:esp?`rgba(${C.fg},.06)`:`rgba(${C.fg},${0.10+0.80*t})`;
+    x.fillRect(xx+1,yy+1,cw-2,ch-2);
+    if(c.s&&esp){x.save();x.beginPath();x.rect(xx+1,yy+1,cw-2,ch-2);x.clip();x.strokeStyle=`rgba(${C.fg},${0.30+0.45*t})`;x.lineWidth=1.4;
+      for(let k=-ch;k<cw+ch;k+=7){x.beginPath();x.moveTo(xx+k,yy+ch);x.lineTo(xx+k+ch,yy);x.stroke()}x.restore()}
+    const strong=t>0.45&&!esp;x.textAlign="center";x.font=(strong||esp?"600 ":"")+"12px "+DIN;
+    const lab=!c.s?"never seen":c.b,tw=x.measureText(lab).width+8;
+    if(c.s&&esp){x.fillStyle=C.bg;x.fillRect(xx+cw/2-tw/2,yy+ch/2-8,tw,16)}
+    x.fillStyle=!c.s?C.faint:strong?(cloud?C.onCyan:C.bg):C.ink;x.fillText(lab,xx+cw/2,yy+ch/2+4);
+    if(m.cur&&i===m.cur[0]&&j===m.cur[1]){x.strokeStyle=C.white;x.lineWidth=2;x.strokeRect(xx+2,yy+2,cw-4,ch-4)}
+  }
+  x.textAlign="left";x.fillStyle=C.soft;x.font="12px "+DIN;
+  for(let i=0;i<nr;i++)x.fillText(m.rows[i],0,top+(nr-1-i)*ch+ch/2+4);
+  x.textAlign="center";for(let j=0;j<nc;j++)x.fillText(m.cols[j],left+j*cw+cw/2,H-5);
+  x.textAlign="left";
+}
+function drawQ(st,q,visits,lastState,maps){
+  if(maps&&maps.length){drawMap(maps[1]&&maps[1].cur?maps[1]:maps[0]);return}
+  const [x,W,H]=fit($("cQ"));x.clearRect(0,0,W,H);x.textAlign="left";
+  if(!q||!st||!st.dims){x.fillStyle=C.faint;x.font="13px "+DIN;x.fillText("The map appears when the gateway runs the Q-learning agent.",0,18);return}
+  const d=st.dims,Lb=st.labels;let cur=[0,0,0,0,0];
+  if(lastState!=null){let r=lastState;for(let k=d.length-1;k>=0;k--){cur[k]=r%d[k];r=Math.floor(r/d[k])}}
+  const rb=cur[2],lb=cur[3],qb=0,ns=d[0],nc=d[1],left=84,top=24,cw=(W-left)/nc,ch=(H-top-22)/ns;
+  const gl=(Lb.gw_load||["fits","tight","too slow"])[lb];
+  x.font="12px "+DIN;x.fillStyle=C.soft;
+  x.fillText(`Shown for: ping ${Lb.rtt_ms[rb]}, gateway ${gl}, empty cloud queue`,0,12);
+  for(let i=0;i<ns;i++)for(let j=0;j<nc;j++){
+    const idx=((((i*d[1]+j)*d[2]+rb)*d[3]+lb)*d[4]+qb),row=q[idx],seen=visits?visits[idx]>0:true;
+    const three=row.length>2,qe=three?row[0]:-1e9,qg=three?row[1]:row[0],qc=three?row[2]:row[1];
+    const best=qg>=qc&&qg>=qe?"gateway":(qc>=qe?"cloud":"ESP32");
+    const top2=[qe,qg,qc].sort((p,r)=>r-p),t=Math.max(0,Math.min(1,(top2[0]-top2[1])/6));
+    const yy=top+(ns-1-i)*ch,xx=left+j*cw;
+    x.fillStyle=!seen?`rgba(${C.fg},.04)`:best==="cloud"?`rgba(${C.cy},${0.16+0.84*t})`:best==="gateway"?`rgba(${C.fg},${0.10+0.80*t})`:`rgba(${C.fg},.06)`;
+    x.fillRect(xx+1,yy+1,cw-2,ch-2);
+    if(seen&&best==="ESP32"){x.save();x.beginPath();x.rect(xx+1,yy+1,cw-2,ch-2);x.clip();x.strokeStyle=`rgba(${C.fg},${0.30+0.45*t})`;x.lineWidth=1.4;
+      for(let k=-ch;k<cw+ch;k+=7){x.beginPath();x.moveTo(xx+k,yy+ch);x.lineTo(xx+k+ch,yy);x.stroke()}x.restore()}
+    const strong=t>0.45&&best!=="ESP32";
+    x.textAlign="center";x.font=(strong||best==="ESP32"?"600 ":"")+"12px "+DIN;
+    const lab=!seen?"never seen":best,tw=x.measureText(lab).width+8;
+    if(seen&&best==="ESP32"){x.fillStyle=C.bg;x.fillRect(xx+cw/2-tw/2,yy+ch/2-8,tw,16)}
+    x.fillStyle=!seen?C.faint:strong?(best==="cloud"?C.onCyan:C.bg):C.ink;
+    x.fillText(lab,xx+cw/2,yy+ch/2+4);
+    if(i===cur[0]&&j===cur[1]){x.strokeStyle=C.white;x.lineWidth=2;x.strokeRect(xx+2,yy+2,cw-4,ch-4)}
+  }
+  x.textAlign="left";x.fillStyle=C.soft;x.font="12px "+DIN;
+  for(let i=0;i<ns;i++)x.fillText(Lb.slack_ms[i],0,top+(ns-1-i)*ch+ch/2+4);
+  x.textAlign="center";for(let j=0;j<nc;j++)x.fillText("cloud "+Lb.cloud_ms[j],left+j*cw+cw/2,H-5);
+  x.textAlign="left";
+}
+function drawHeat(lc){
+  const img=$("latestImg"),c=$("heatCanvas");
+  if(!lc){return}
+  const src="data:image/jpeg;base64,"+lc.jpeg;if(img.dataset.t!==String(lc.t)){img.src=src;img.dataset.t=String(lc.t)}
+  $("eyeP").textContent=Math.round(lc.p*100)+"%";
+  $("eyeL").textContent=`chance that box ${lc.box??"?"} is damaged`;
+  const d=window.devicePixelRatio||1;c.width=150*d;c.height=150*d;
+  const x=c.getContext("2d");x.clearRect(0,0,c.width,c.height);
+  const h=lc.heatmap;if(!h||!h.length)return;
+  const gh=h.length,gw=h[0].length,sm=document.createElement("canvas");sm.width=gw;sm.height=gh;
+  const sx=sm.getContext("2d"),id=sx.createImageData(gw,gh);
+  for(let i=0;i<gh;i++)for(let j=0;j<gw;j++){const v=h[i][j],k=4*(i*gw+j);
+    id.data[k]=0;id.data[k+1]=224;id.data[k+2]=255;id.data[k+3]=v<0.2?0:Math.round(255*Math.min(0.8,v*0.85))}
+  sx.putImageData(id,0,0);x.imageSmoothingEnabled=true;x.imageSmoothingQuality="high";x.drawImage(sm,0,0,c.width,c.height);
+}
+function renderFeed(rec){
+  $("feedEmpty").style.display=rec.length?"none":"";
+  $("feed").style.display=rec.length?"":"none";
+  $("feed").innerHTML=rec.slice(0,8).map(e=>{
+    const late=e.on_time===false,wrong=e.truth&&!late&&e.truth!==e.verdict&&e.truth==="damaged";
+    const where=e.first?(e.asked?(e.cloud_late?"cloud late":"cloud too"):"gateway"):e.action==="EDGE"?"ESP32":e.action==="GATEWAY"?"gateway":e.action==="CLOUD"?"cloud":"no photo";
+    const res=late?"missed":e.verdict==="damaged"?"damaged":"good";
+    return `<div class="bx${late||wrong?" alert":""}">${e.thumb?`<img alt="" src="data:image/jpeg;base64,${e.thumb}">`:""}
+      <div class="h"><b>${e.box_id}</b><span class="w${e.action==="CLOUD"?" c":""}">${where}</span></div>
+      <div class="r"><b>${wrong?"shipped damaged":res}</b>${e.changed?" (changed)":""}</div><div class="r">${e.conf_name?esc(e.conf_name):Math.round(e.latency_ms||0)+" ms"}</div></div>`}).join("");
+}
+
+/* ------------------------------------------------------------------ guided demo (pretend belt: everything works; on the real
+   belt the Wi-Fi steps need a Linux gateway with gateway.allow_shaping, the cloud-overload step always works) */
+const DEMO=[
+  [0,  {scenario:"good",server_slow:false,gw_stress:false,cloud_per_min:15},"Normal network","The laptop checks every box in about 2 ms. Where its model is unsure, the agent asks the cloud for a second opinion, as long as cloud calls are left."],
+  [22, {cloud_per_min:4},"Cloud calls cut to 4 a minute","Calls are scarce now. The agent saves them for the boxes the laptop is least sure about."],
+  [46, {cloud_per_min:15,scenario:"bad"},"Internet turns bad","A cloud answer would come too late to matter. The agent stops asking and keeps the laptop's verdicts. No box is missed."],
+  [66, {gw_stress:true},"The gateway chokes too","Now the laptop is overloaded as well. Its model would answer too late. The only checker left in time is the tiny model on the ESP32: weaker eyes, but no box passes unchecked."],
+  [92, {gw_stress:false},"Gateway recovers","It times its own model every 2 seconds, sees it is fast again, and takes the work back from the ESP32."],
+  [108,{scenario:"good"},"Internet recovers","Nobody told it. The 2-second test photo comes back fast again and it starts asking the cloud again."],
+  [128,{server_slow:true},"Cloud server overloaded","Ping still looks perfect. The cloud answers arrive late, so the laptop's verdict is used and the agent stops spending calls."],
+  [152,{server_slow:false},"Back to normal","Same agent, no re-tuning: a tight budget and four different faults."],
+  [170,null,"",""]];
+let demo=null;
+function demoStop(){if(!demo)return;demo.timers.forEach(clearTimeout);demo=null;$("story").hidden=true;
+  $("btnDemo").classList.remove("active");$("btnDemo").textContent="Run the guided demo";$("demoNote").textContent=""}
+$("btnDemo").onclick=()=>{
+  if(demo){demoStop();setCtl({scenario:"good",server_slow:false,gw_stress:false,cloud_per_min:15});return}
+  const miss0=S&&S.all?S.all.missed||0:0,n0=S&&S.all?S.all.n||0:0;
+  demo={timers:[],miss0,n0};$("btnDemo").classList.add("active");$("btnDemo").textContent="Stop the demo";
+  DEMO.forEach(([at,upd,step,say],i)=>demo.timers.push(setTimeout(()=>{
+    if(!demo)return;
+    if(upd===null){const m=(S.all.missed||0)-demo.miss0,n=(S.all.n||0)-demo.n0;demoStop();
+      $("demoNote").textContent=`Demo finished: ${m} of ${n} boxes missed.`;return}
+    setCtl(upd);$("head").hidden=true;$("story").hidden=false;$("storyStep").textContent=`Step ${i+1} of ${DEMO.length-1}: ${step}`;$("storySay").textContent=say;
+  },at*1000)));
+};
+
+/* ------------------------------------------------------------------ poll */
+function tick(){
+  api("/api/state").then(r=>r.json()).then(s=>{
+    S=s;const a=s.all||{},h=s.last100||{},st=s.status||{};
+    ctl=s.control||{};renderCtl();
+    const piOk=s.status_age_s!=null&&s.status_age_s<5;
+    setStat("stPi","stPiV",piOk?(st.mock?"online, pretend belt":"online"):(s.status_age_s==null?"not started":"offline"),piOk?"on":(s.status_age_s==null?"":"alert"));
+    const es=st.esp32||{};
+    setStat("stEsp","stEspV",!piOk?"waiting":es.mode==="no model"?"no model yet":es.mode==="real"?(es.alive?`on USB, ${ms(st.edge_ms)}`:"not answering"):`pretend, ${ms(st.edge_ms)}`,
+            !piOk?"":(es.mode==="real"&&!es.alive?"alert":"on"));
+    const where=s.server.where&&s.server.where!=="local"?s.server.where:"this PC";
+    setStat("stSrv","stSrvV",`${where}${s.server.avg_ms!=null?", "+s.server.avg_ms+" ms per photo":""}`,"on");
+    setStat("stPol","stPolV",st.policy?`${st.policy}${st.learning?", still learning":""}`:"waiting",st.policy?"on":"");
+    const bu=st.budget;
+    setStat("stBud","stBudV",!piOk||!bu?"waiting":!bu.limited?"no limit":`${Math.floor(bu.calls_left)} left, ${Math.round(bu.per_min)} a minute`,piOk&&bu?"on":"");
+    const so=!!st.second_opinion;
+    $("kEdgeL").textContent=so?"Gateway's verdict kept":"Checked on the gateway";
+    $("kCloudL").textContent=so?"Cloud asked for a second opinion":"Sent to the cloud";
+    $("kCloudS").textContent=so&&a.asked?`${a.changed||0} changed, ${a.cloud_late||0} late`:"big model, over the Internet";
+    if(st.belt_duty!=null&&document.activeElement!==$("belt")){$("belt").value=st.belt_duty;$("beltV").textContent=(+st.belt_duty).toFixed(2)}
+    if(st.policy_key&&document.activeElement!==$("policy"))$("policy").value=st.policy_key;
+    $("kN").textContent=a.n||0;$("kRate").textContent=a.n?`${a.per_min} in the last minute`:" ";
+    $("kEsp").textContent=pct(a.edge,a.n);$("kEdge").textContent=pct(a.gateway,a.n);$("kCloud").textContent=pct(a.cloud,a.n);
+    if(piOk){$("kEspS").textContent=es.mode==="real"?`real board, ${ms(st.edge_ms)} per photo`:es.mode==="no model"?"no model yet":`pretend board, ${ms(st.edge_ms)} per photo`;
+      $("kGwS").textContent=st.gw_ms!=null?`small model, ${ms(st.gw_ms)} per photo`:"small model, on the laptop"}
+    $("kMiss").textContent=pct(a.missed,a.n);$("kMissK").className="k"+(a.n&&a.missed/a.n>0.02?" alert":"");
+    $("kMiss100").textContent=h.n?"last 100: "+pct(h.missed,h.n):" ";
+    $("kAcc").textContent=a.known?pct(a.correct,a.known):"n/a";$("kAccS").textContent=a.known?`${a.known} labelled boxes`:"needs true labels";
+    $("kEsc").textContent=a.damaged_known?pct(a.escaped,a.damaged_known):"n/a";$("kEscK").className="k"+(a.escaped?" alert":"");
+    $("kEscS").textContent=a.damaged_known?`${a.escaped} of ${a.damaged_known} damaged`:" ";
+    $("kRew").textContent=a.avg_reward!=null?(+a.avg_reward).toFixed(2):"n/a";
+    $("kLat").textContent=a.avg_latency_ms?`average answer ${a.avg_latency_ms} ms`:"closer to 0 is better";
+    $("shapeNote").textContent=piOk?(st.mock?"Pretend belt: the Wi-Fi faults and the gateway overload are emulated in software."+(es.mode==="real"?" The ESP32 is the real board.":""):
+      "Real belt: the cloud-overload button always works. Overloading the gateway loads this laptop's processor for real. The Wi-Fi buttons need a Linux gateway."):"";
+    ingest(s.recent);why(s.recent&&s.recent.length?s.recent[0]:null);headline(s);
+    if(view!=="live")return;
+    drawDecisions(s.series||[]);drawNet(s.series||[]);renderFeed(s.recent||[]);
+    drawQ(st,s.q,s.visits,s.recent&&s.recent.length?s.recent[0].state:null,s.qmaps);drawHeat(s.last_cloud);
+  }).catch(err=>{if(String(err&&err.message)==="401")return;
+    setStat("stSrv","stSrvV","not reachable","alert");setStat("stPi","stPiV","unknown","")});
+}
+setTheme(document.documentElement.dataset.theme==="light"?"light":"dark",false);
+setInterval(tick,800);tick();requestAnimationFrame(loop);
+if(location.hash.length>1)show(location.hash.slice(1));
+window.addEventListener("resize",()=>{if(view!=="live")return;const c=$("cLine");delete c.dataset.h;c.style.height="";tick()});
+</script>
+</body>
+</html>

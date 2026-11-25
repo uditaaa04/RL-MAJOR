@@ -1,0 +1,46 @@
+{
+  "threshold": {
+    "rtt_threshold_ms": 50
+  },
+  "deadline": {
+    "margin_s": 0.3,
+    "gw_s": 0.008,
+    "jpeg_s": 0.003,
+    "payload_kb": 16.0,
+    "bw_mbps": 10.0,
+    "server_s": 0.015,
+    "esp_s": 0.07709237555555556
+  },
+  "adaptive": {
+    "margin_s": 0.2,
+    "gw_s": 0.008,
+    "jpeg_s": 0.003,
+    "payload_kb": 16.0,
+    "bw_mbps": 10.0,
+    "server_s": 0.015,
+    "esp_s": 0.07709237555555556
+  },
+  "confidence": {
+    "min_conf": 3,
+    "margin_s": 0.15,
+    "gw_s": 0.008,
+    "jpeg_s": 0.003,
+    "payload_kb": 16.0,
+    "bw_mbps": 10.0,
+    "server_s": 0.015,
+    "esp_s": 0.07709237555555556
+  },
+  "confidence_reserve": {
+    "min_conf": 2,
+    "reserve": 0.7,
+    "margin_s": 0.15,
+    "gw_s": 0.008,
+    "jpeg_s": 0.003,
+    "payload_kb": 16.0,
+    "bw_mbps": 10.0,
+    "server_s": 0.015,
+    "esp_s": 0.07709237555555556
+  },
+  "_photos": "public photos, data\\public",
+  "_note": "tuned by sim/train_q.py on randomised conditions (same as Q pre-training)"
+}

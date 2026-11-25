@@ -1,0 +1,96 @@
+{
+ "standin": true,
+ "dataset": "Synthetic Task Flow Graphs",
+ "doi": "10.5281/zenodo.10654551",
+ "graphs": 18,
+ "train_graphs": 12,
+ "seeds": 2,
+ "episodes": 300,
+ "policies": [
+  "edge",
+  "hub",
+  "cloud",
+  "random",
+  "eft",
+  "qlearning"
+ ],
+ "groups": [
+  "about 10 tasks",
+  "about 100 tasks",
+  "about 1000 tasks (never seen in training)"
+ ],
+ "verdict": "On the graphs it never saw (about 1000 tasks) Q-learning is 48 % slower than the greedy scheduler.",
+ "by_group": {
+  "about 10 tasks": {
+   "edge": 7.56,
+   "hub": 1.55,
+   "cloud": 1.08,
+   "random": 8.98,
+   "eft": 1.0,
+   "qlearning": 1.04
+  },
+  "about 100 tasks": {
+   "edge": 7.52,
+   "hub": 1.79,
+   "cloud": 1.03,
+   "random": 4.38,
+   "eft": 1.0,
+   "qlearning": 1.26
+  },
+  "about 1000 tasks (never seen in training)": {
+   "edge": 8.57,
+   "hub": 2.02,
+   "cloud": 1.08,
+   "random": 4.44,
+   "eft": 1.0,
+   "qlearning": 1.48
+  }
+ },
+ "by_network": {
+  "good": {
+   "edge": 10.3,
+   "hub": 2.28,
+   "cloud": 1.0,
+   "random": 4.76,
+   "eft": 1.0,
+   "qlearning": 1.43
+  },
+  "busy": {
+   "edge": 7.62,
+   "hub": 1.73,
+   "cloud": 0.97,
+   "random": 4.89,
+   "eft": 1.0,
+   "qlearning": 1.28
+  },
+  "bad": {
+   "edge": 5.73,
+   "hub": 1.35,
+   "cloud": 1.23,
+   "random": 8.15,
+   "eft": 1.0,
+   "qlearning": 1.07
+  }
+ },
+ "q_cases": {
+  "about 10 tasks": {
+   "better": 6,
+   "same": 15,
+   "worse": 15
+  },
+  "about 100 tasks": {
+   "better": 10,
+   "same": 8,
+   "worse": 18
+  },
+  "about 1000 tasks (never seen in training)": {
+   "better": 7,
+   "same": 7,
+   "worse": 22
+  }
+ },
+ "q_per_seed": [
+  1.46,
+  1.06
+ ]
+}

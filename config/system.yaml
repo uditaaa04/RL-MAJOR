@@ -1,0 +1,157 @@
+# =============================================================================
+#  Smart Conveyor QC - ONE config file for the gateway, the cloud server and the sim
+#  Three nodes:  ESP32 (edge, on the belt)  <-USB->  laptop (gateway)  <-Internet->  AWS (cloud)
+#  (Edit the values marked  <-- CHANGE  for your setup.)
+# =============================================================================
+
+project:
+  title: "IoT Based Edge-Cloud Orchestration using Reinforcement Learning"
+  application: "Adaptive edge-gateway-cloud offloading for real-time visual quality inspection on a smart conveyor"
+
+# ---------------- cloud server (AWS EC2, or a laptop for a local demo) ----------------
+server:
+  host: 0.0.0.0            # listen on all network cards
+  port: 8000
+  cloud_url: "http://<ec2-public-ip>:8000"  # <-- CHANGE: AWS EC2 Elastic IP (ap-south-1), or set env CONVEYOR_SERVER
+  threads: 8
+  api_key: ""              # leave EMPTY here; put the key in the environment variable CONVEYOR_API_KEY
+                           # (on EC2 the bootstrap writes it to /etc/smart-conveyor.env)
+  device_id: gateway-1     # name of this gateway in the cloud logs / Q-table backups (env CONVEYOR_DEVICE_ID)
+
+# ---------------- cloud side extras ----------------
+cloud:
+  qtable_backup_every_s: 60   # gateway uploads its online-learned Q-table to the server this often (0 = never)
+  # S3 backups and CloudWatch metrics are switched on by environment variables on the EC2
+  # instance (CONVEYOR_S3_BUCKET, CONVEYOR_METRICS=1) - see docs/CLOUD_AWS.md
+
+# ---------------- ESP32 edge node (USB cable to the gateway) ----------------
+esp32:
+  port: auto               # auto = find the board by itself; or a fixed port, e.g. COM5  (/dev/ttyUSB0 on Linux)
+  baud: 460800             # must match BAUD in esp32_node/esp32_node.ino
+  ir_active_low: true      # most IR obstacle modules give LOW when they see a box
+  servo_rest_deg: 0        # reject arm resting                                  <-- TUNE
+  servo_push_deg: 80       # reject arm pushing a box off                        <-- TUNE
+  servo_hold_ms: 350       # how long the arm stays out
+  debounce_ms: 20
+  answer_timeout_s: 0.25   # no answer from the ESP32 after this long = failed, the gateway checks the box itself
+
+# ---------------- gateway extras ----------------
+gateway:
+  allow_shaping: false     # Linux gateway only: dashboard Wi-Fi buttons run tools/net_shape.sh via sudo
+  iface: wlan0             # Wi-Fi interface name (Linux)
+
+# ---------------- AI models ----------------
+models:
+  edge_tiny: models/edge_tiny.bin          # tiny model, runs on the ESP32 (sent to it over USB at start)
+  gateway_onnx: models/gateway_model.onnx  # small model, runs on the gateway laptop
+  cloud_onnx: models/cloud_model.onnx      # big model, runs on the cloud server (EC2)
+  card: models/model_card.json             # accuracy numbers of all three (used by the reward)
+  photo_scores: models/photo_scores.npz    # every validation/test photo's score at each place (tools/photo_scores.py)
+  gateway_threads: 4
+  damaged_threshold: 0.5                # fallback cut-off; normally each model's cost-based
+                                        # threshold from model_card.json is used
+
+# ---------------- camera ----------------
+camera:
+  source: usb              # usb (webcam on the gateway) | mock (pretend belt, photos from disk)
+  usb_device: auto         # auto = first USB webcam; or a fixed name from  python -m tools.webcam_check --list
+                           # e.g. /dev/v4l/by-id/usb-046d_C270_HD_WEBCAM-video-index0 (survives re-plugging)
+  usb_index: 0             # only used if no USB webcam is found by "auto"
+  usb_fourcc: MJPG         # MJPG = 30 fps at 640x480 on every UVC webcam (YUYV is often only 10-15 fps)
+  usb_fps: 30
+  usb_warmup_frames: 5
+  usb_controls:            # locked webcam settings (v4l2-ctl); names this webcam lacks are skipped
+    power_line_frequency: 1        # 1 = 50 Hz mains (India): no flicker bands from room lights
+    auto_exposure: 1               # 1 = MANUAL exposure (3 = auto). Auto = blur + fps drop in dim light
+    exposure_time_absolute: 100    # x 100 us = 10 ms. Smaller = sharper moving boxes but darker  <-- TUNE
+    exposure_dynamic_framerate: 0  # never slow down to 15 fps
+    # gain: 64                     # uncomment and raise if the photo is still dark (adds some noise)
+    white_balance_automatic: 0     # fixed colours from photo to photo
+    white_balance_temperature: 4600
+    focus_automatic_continuous: 0  # webcams with autofocus: lock it, else it "hunts" on every box
+    focus_absolute: 40             # higher = closer focus (try 30-80 for a camera ~25 cm above)   <-- TUNE
+  width: 640
+  height: 480
+  roi: [80, 0, 480, 480]   # x, y, w, h : square area where the box appears  <-- CHANGE after mounting
+  capture_delay_ms: 0      # wait after IR1 so the box is centred under the camera
+  upload_size: 256         # image side (px) sent to the cloud server
+  jpeg_quality: 85
+
+# ---------------- conveyor mechanics ----------------
+conveyor:
+  cam_to_arm_m: 0.10       # distance camera centre -> reject arm   <-- MEASURE
+  belt_duty: 0.6           # motor PWM duty 0..1 at start
+  speed_mps_at_full: 0.30  # belt speed at duty 1.0                  <-- MEASURE (tools/calibrate.py)
+  guard_s: 0.05            # safety margin: the arm needs this much time
+  min_box_gap_s: 0.25      # ignore IR glitches closer than this
+  defect_rate_assumed: 0.30  # share of damaged boxes expected (testbed)
+
+# ---------------- reinforcement learning agent ----------------
+agent:
+  policy: qlearning        # qlearning | confidence | confidence_reserve | ask_always (second opinion)
+                           # always_edge | always_gateway | always_cloud | threshold | deadline | adaptive (pick one place)
+  q_table: models/q_table.npz
+  learn_online: true       # keep learning while running
+  alpha: 0.1               # learning rate (online)
+  gamma: 0.9               # how much the next boxes matter (a cloud call spent now is missing later)
+  epsilon: 0.02            # exploration: try another place 2% of the time ...
+  explore_gap: 3.0         # ... but only one whose value is this close to the best (safe exploration)
+  forget: 0.02             # "bad memories fade": the unused option drifts back toward its pre-trained value
+  # (alpha, epsilon, explore_gap were chosen on separate random validation runs - see docs/ALGORITHM.md)
+  save_every: 25           # save the Q-table every N boxes
+  rule_params: models/rule_params.json   # tuned thresholds for the baseline rules
+
+# ---------------- cloud-call budget ----------------
+# The gateway's model checks every box first; the cloud is only asked for a second opinion.
+# Cloud calls cost money and bandwidth, so they are limited. The agent learns to spend them on the
+# boxes the gateway's model is unsure about. The dashboard can change the limit while the line runs.
+cloud_budget:
+  per_min: 15              # cloud calls allowed per minute (0 = no limit)
+  burst: 5                 # unused calls that can be saved up
+
+# What the agent "sees" (state): 8 x 3 x 3 x 3 x 2 x 5 x 4 = 8,640 states, 3 choices each (ESP32 / gateway / cloud).
+state_bins:
+  slack_ms: [-50, 0, 50, 100, 150, 250, 400]   # SPARE TIME if sent to the cloud (8 bins)
+  cloud_ms: [150, 400]                         # measured cloud response: fast / slow / very slow
+  rtt_ms:   [50, 200]                          # ping: good / busy / bad
+  gw_fit:   [0.4, 1.0]                         # gateway's predicted time / time left: fits / tight / too slow
+  gw_default_ms: 10                            # gateway model time assumed before the first measurement
+  cloud_overhead_ms: 30                        # upload + cloud model time added to the ping (calibrated)
+                                               # + cloud queue: 0 or 1+   (2 bins)
+  budget_calls: [1, 2, 3]                      # cloud calls left right now: none / 1 / 2 / 3 or more
+                                               # + how sure the gateway's model is about this box (5 levels;
+                                               #   the level borders are learned from the validation photos)
+
+# Reward = - (expected cost of this box) - energy_weight * joules
+#   * escaped defect (damaged box shipped)  costs  cost_escape
+#   * false reject (good box thrown away)   costs  cost_false_reject
+#   * box not checked in time (missed)      costs  defect_rate*cost_escape + cost_unchecked
+reward:
+  cost_escape: 100.0
+  cost_false_reject: 10.0
+  cost_unchecked: 5.0
+  energy_weight: 1.0       # per joule
+
+# ---------------- network monitor ----------------
+network:
+  probe_interval_s: 0.5    # ping the cloud server every 0.5 s
+  probe_timeout_s: 0.6
+  ewma_alpha: 0.3          # smoothing of the ping time
+  cloud_probe_interval_s: 2.0   # send a small test image to the cloud every 2 s
+  cloud_probe_timeout_s: 1.0
+  cloud_ewma_alpha: 0.4         # smoothing of the full cloud response time
+
+# ---------------- energy model ----------------
+energy:
+  p_cpu_active_w: 8.0      # extra watts while the gateway laptop runs a model
+  p_wifi_tx_w: 0.6         # extra watts while the Wi-Fi radio is sending
+  p_esp32_w: 0.5           # ESP32 at full speed
+
+# ---------------- demo without hardware (pretend belt, pretend ESP32) ----------------
+mock:
+  feed_dir: data/synth/test      # images used as "boxes" on the pretend belt
+  gateway_slowdown: 1.0          # multiply the gateway model time (1 = this laptop as it is)
+  gateway_overload_ms: 600       # "Overload the gateway" button: each photo then takes this much longer on the gateway
+  box_gap_s: [0.7, 1.5]          # random time between boxes
+  belt_speed_mps: 0.20
+  scenario: good                 # starting network scenario

@@ -1,0 +1,285 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Smart Conveyor QC - cloud side of the edge-cloud RL orchestrator. One EC2 instance runs the
+  big defect model (POST /infer), the live dashboard and the model registry; S3 keeps backups
+  (box logs, the Pi's online Q-table); CloudWatch gets live metrics, logs, a dashboard and alarms.
+  Deploy with cloud/deploy_aws.ps1 (it creates the S3 bucket, the API-key parameter and uploads the code first).
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t3.medium, c6i.large, c7i.large]
+    Description: >-
+      t3.micro (2 vCPU, 1 GiB) is the default, as in the paper's Table III, and free-tier eligible; for long
+      measurement runs prefer c6i.large or c7i.large (no CPU-credit throttling in the middle of an experiment).
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket that holds the code bundle (smart-conveyor/bundle/) and the backups (smart-conveyor/data/).
+  BundleKey:
+    Type: String
+    Default: smart-conveyor/bundle/server_bundle.zip
+  ApiKeyParameterName:
+    Type: String
+    Default: /smart-conveyor/api-key
+    AllowedPattern: "^/smart-conveyor/[A-Za-z0-9_.-]+$"
+    Description: SSM Parameter Store SecureString holding the API key (created by deploy_aws.ps1).
+  AllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    Description: >-
+      Who may reach the server port. Your network's public IP with /32 is safest; 0.0.0.0/0 is
+      acceptable because every API call needs the API key.
+  ServerPort:
+    Type: Number
+    Default: 8000
+    MinValue: 1024
+    MaxValue: 65535
+  SshCidr:
+    Type: String
+    Default: 127.0.0.1/32
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    Description: SSH is closed by default - use AWS Systems Manager Session Manager instead (no open port needed).
+  KeyPairName:
+    Type: String
+    Default: ""
+    Description: Optional EC2 key pair for SSH (leave empty to use Session Manager only).
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Optional e-mail for alarms (missed boxes above 5%, server status check failed).
+  LineName:
+    Type: String
+    Default: line-1
+    Description: Name of the conveyor line, used as the CloudWatch metric dimension.
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+
+Resources:
+  # ------------------------------------------------------------------ network access
+  ServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Smart Conveyor cloud server (inference API + dashboard)
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ServerPort
+          ToPort: !Ref ServerPort
+          CidrIp: !Ref AllowedCidr
+          Description: Pi node and dashboard browser
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshCidr
+          Description: SSH (closed unless SshCidr is changed)
+      Tags:
+        - Key: Project
+          Value: smart-conveyor
+
+  # ------------------------------------------------------------------ permissions (least privilege)
+  ServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore   # Session Manager + remote update
+      Policies:
+        - PolicyName: smart-conveyor-server
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadCodeBundle
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${ArtifactBucket}/smart-conveyor/bundle/*
+              - Sid: WriteBackups
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${ArtifactBucket}/smart-conveyor/data/*
+              - Sid: ReadApiKey
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApiKeyParameterName}
+              - Sid: DecryptApiKeyViaSsm
+                Effect: Allow
+                Action: kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+              - Sid: PublishMetrics
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: SmartConveyor
+              - Sid: ShipLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !GetAtt ServerLogGroup.Arn      # already ends in ":*" (all streams)
+
+  ServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ServerRole
+
+  ServerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /smart-conveyor/${AWS::StackName}
+      RetentionInDays: 14
+
+  # ------------------------------------------------------------------ the server
+  ServerInstance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT20M            # the stack waits until /health answers on the instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref ServerInstanceProfile
+      SecurityGroupIds:
+        - !GetAtt ServerSecurityGroup.GroupId
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
+      MetadataOptions:
+        HttpTokens: required      # IMDSv2 only
+        HttpEndpoint: enabled
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-server
+        - Key: Project
+          Value: smart-conveyor
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # First boot: install the cloud server from the code bundle in S3, then tell CloudFormation.
+          set -euo pipefail
+          exec > >(tee -a /var/log/smart-conveyor-bootstrap.log) 2>&1
+          dnf install -y aws-cfn-bootstrap unzip
+          signal() { /opt/aws/bin/cfn-signal -e "$1" --stack '${AWS::StackName}' --resource ServerInstance --region '${AWS::Region}' || true; }
+          trap 'signal 1' ERR
+          mkdir -p /opt/smart-conveyor
+          aws s3 cp 's3://${ArtifactBucket}/${BundleKey}' /opt/smart-conveyor/bundle.zip --region '${AWS::Region}'
+          rm -rf /opt/smart-conveyor/app && mkdir -p /opt/smart-conveyor/app
+          unzip -q -o /opt/smart-conveyor/bundle.zip -d /opt/smart-conveyor/app
+          AWS_REGION='${AWS::Region}' ARTIFACT_BUCKET='${ArtifactBucket}' BUNDLE_KEY='${BundleKey}' \
+          API_KEY_PARAM='${ApiKeyParameterName}' SERVER_PORT='${ServerPort}' LOG_GROUP='${ServerLogGroup}' \
+          LINE_NAME='${LineName}' bash /opt/smart-conveyor/app/cloud/aws/bootstrap_ec2.sh
+          signal 0
+
+  ServerIp:
+    Type: AWS::EC2::EIP          # fixed public address: the Pi's config never has to change
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref ServerInstance
+      Tags:
+        - Key: Project
+          Value: smart-conveyor
+
+  # ------------------------------------------------------------------ monitoring
+  ServerDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub ${AWS::StackName}-line
+      DashboardBody: !Sub |
+        {"widgets":[
+          {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"Missed boxes (%) and boxes sent to the cloud (%)","region":"${AWS::Region}","stat":"Average","period":60,
+            "metrics":[["SmartConveyor","MissRatePct","Line","${LineName}"],[".","CloudSharePct",".","."]]}},
+          {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"Answer time (ms)","region":"${AWS::Region}","stat":"Average","period":60,
+            "metrics":[["SmartConveyor","AvgLatencyMs","Line","${LineName}"],[".","ServerInferMs",".","."]]}},
+          {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"Boxes per minute","region":"${AWS::Region}","stat":"Average","period":60,
+            "metrics":[["SmartConveyor","BoxesPerMinute","Line","${LineName}"]]}},
+          {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"Server CPU (%)","region":"${AWS::Region}","stat":"Average","period":60,
+            "metrics":[["AWS/EC2","CPUUtilization","InstanceId","${ServerInstance}"]]}}
+        ]}
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  MissRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmDescription: More than 5% of boxes passed the reject arm unchecked (5-minute average).
+      Namespace: SmartConveyor
+      MetricName: MissRatePct
+      Dimensions:
+        - Name: Line
+          Value: !Ref LineName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  StatusCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmDescription: The cloud server failed its EC2 status check.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref ServerInstance
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+
+Outputs:
+  ServerUrl:
+    Description: Put this in the Pi config (server.cloud_url) or env CONVEYOR_SERVER
+    Value: !Sub http://${ServerIp}:${ServerPort}
+  DashboardUrl:
+    Description: Live dashboard (asks for the API key once)
+    Value: !Sub http://${ServerIp}:${ServerPort}/
+  InstanceId:
+    Value: !Ref ServerInstance
+  PublicIp:
+    Value: !Ref ServerIp
+  CloudWatchDashboard:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-line
+  LogGroup:
+    Value: !Ref ServerLogGroup
+  BackupLocation:
+    Value: !Sub s3://${ArtifactBucket}/smart-conveyor/data/

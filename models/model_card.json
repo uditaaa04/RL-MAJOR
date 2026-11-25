@@ -1,0 +1,371 @@
+{
+ "cloud": {
+  "role": "cloud",
+  "arch": "mobilenet_v3_large",
+  "img": 160,
+  "init": "imagenet",
+  "data": "data/public",
+  "epochs": 8,
+  "threshold": 0.15999999999999998,
+  "val": {
+   "accuracy": 0.9540816326530612,
+   "recall_damaged": 0.9883040935672515,
+   "false_reject_rate": 0.09349593495934959,
+   "confusion": {
+    "tp": 338,
+    "fn": 4,
+    "tn": 223,
+    "fp": 23
+   },
+   "n": 588
+  },
+  "history": [
+   {
+    "epoch": 1,
+    "train_loss": 0.9504362612791445,
+    "val_acc": 0.8928571428571429
+   },
+   {
+    "epoch": 2,
+    "train_loss": 0.17519474123743758,
+    "val_acc": 0.9404761904761905
+   },
+   {
+    "epoch": 3,
+    "train_loss": 0.12339928187429905,
+    "val_acc": 0.8945578231292517
+   },
+   {
+    "epoch": 4,
+    "train_loss": 0.06839724045096972,
+    "val_acc": 0.9574829931972789
+   },
+   {
+    "epoch": 5,
+    "train_loss": 0.042194720265327085,
+    "val_acc": 0.9472789115646258
+   },
+   {
+    "epoch": 6,
+    "train_loss": 0.03689766873808942,
+    "val_acc": 0.95578231292517
+   },
+   {
+    "epoch": 7,
+    "train_loss": 0.01608885480510807,
+    "val_acc": 0.95578231292517
+   },
+   {
+    "epoch": 8,
+    "train_loss": 0.019072825339657585,
+    "val_acc": 0.95578231292517
+   }
+  ],
+  "classes": [
+   "good",
+   "damaged"
+  ],
+  "mean": [
+   0.48500001430511475,
+   0.4560000002384186,
+   0.4059999883174896
+  ],
+  "std": [
+   0.2290000021457672,
+   0.2240000069141388,
+   0.22499999403953552
+  ],
+  "outputs": [
+   "logits [good, damaged]",
+   "heatmap (sigmoid damage score per region)"
+  ],
+  "trained_at": "2026-11-25 17:29:10",
+  "test": {
+   "accuracy": 0.9545454545454546,
+   "recall_damaged": 0.9770773638968482,
+   "false_reject_rate": 0.07755102040816327,
+   "confusion": {
+    "tp": 341,
+    "fn": 8,
+    "tn": 226,
+    "fp": 19
+   },
+   "n": 594
+  },
+  "onnx": {
+   "file": "cloud_model.onnx",
+   "max_abs_err_vs_torch": 9.059906005859375e-06,
+   "cpu_latency_ms_training_machine": 1.61
+  }
+ },
+ "gateway": {
+  "role": "edge",
+  "arch": "mobilenet_v3_small",
+  "img": 128,
+  "init": "imagenet",
+  "data": "data/public",
+  "epochs": 12,
+  "threshold": 0.06,
+  "val": {
+   "accuracy": 0.9166666666666666,
+   "recall_damaged": 0.9883040935672515,
+   "false_reject_rate": 0.18292682926829268,
+   "confusion": {
+    "tp": 338,
+    "fn": 4,
+    "tn": 201,
+    "fp": 45
+   },
+   "n": 588
+  },
+  "history": [
+   {
+    "epoch": 1,
+    "train_loss": 1.1823450278961796,
+    "val_acc": 0.6802721088435374
+   },
+   {
+    "epoch": 2,
+    "train_loss": 0.5026106610037815,
+    "val_acc": 0.8503401360544217
+   },
+   {
+    "epoch": 3,
+    "train_loss": 0.23957252575234436,
+    "val_acc": 0.8520408163265306
+   },
+   {
+    "epoch": 4,
+    "train_loss": 0.14772900196070643,
+    "val_acc": 0.8792517006802721
+   },
+   {
+    "epoch": 5,
+    "train_loss": 0.12048769271236727,
+    "val_acc": 0.8826530612244898
+   },
+   {
+    "epoch": 6,
+    "train_loss": 0.0692937830302479,
+    "val_acc": 0.8894557823129252
+   },
+   {
+    "epoch": 7,
+    "train_loss": 0.0676364819198076,
+    "val_acc": 0.9030612244897959
+   },
+   {
+    "epoch": 8,
+    "train_loss": 0.053407285196556784,
+    "val_acc": 0.9149659863945578
+   },
+   {
+    "epoch": 9,
+    "train_loss": 0.02749756037594815,
+    "val_acc": 0.9268707482993197
+   },
+   {
+    "epoch": 10,
+    "train_loss": 0.022426293758761096,
+    "val_acc": 0.9149659863945578
+   },
+   {
+    "epoch": 11,
+    "train_loss": 0.025130254963155966,
+    "val_acc": 0.9166666666666666
+   },
+   {
+    "epoch": 12,
+    "train_loss": 0.023302437328123326,
+    "val_acc": 0.9183673469387755
+   }
+  ],
+  "classes": [
+   "good",
+   "damaged"
+  ],
+  "mean": [
+   0.48500001430511475,
+   0.4560000002384186,
+   0.4059999883174896
+  ],
+  "std": [
+   0.2290000021457672,
+   0.2240000069141388,
+   0.22499999403953552
+  ],
+  "outputs": [
+   "logits [good, damaged]",
+   "heatmap (sigmoid damage score per region)"
+  ],
+  "trained_at": "2026-11-25 17:16:09",
+  "test": {
+   "accuracy": 0.898989898989899,
+   "recall_damaged": 0.9598853868194842,
+   "false_reject_rate": 0.18775510204081633,
+   "confusion": {
+    "tp": 335,
+    "fn": 14,
+    "tn": 199,
+    "fp": 46
+   },
+   "n": 594
+  },
+  "onnx": {
+   "file": "edge_model.onnx",
+   "max_abs_err_vs_torch": 6.4373016357421875e-06,
+   "cpu_latency_ms_training_machine": 0.59
+  }
+ },
+ "edge": {
+  "role": "edge",
+  "arch": "TinyCNN: 4 x 3x3 conv (8, 16, 24, 32), average, 1 output",
+  "img": 48,
+  "channels": 1,
+  "params": 11705,
+  "mults": 580608,
+  "bytes": 46852,
+  "file": "edge_tiny.bin",
+  "init": "scratch",
+  "data": "data/public",
+  "epochs": 120,
+  "threshold": 0.05,
+  "val": {
+   "n": 588,
+   "accuracy": 0.685374149659864,
+   "recall_damaged": 0.9941520467836257,
+   "false_reject_rate": 0.7439024390243902
+  },
+  "classes": [
+   "good",
+   "damaged"
+  ],
+  "firmware_vs_pytorch_max_abs_err": 1.0513525109390187e-06,
+  "candidates": [
+   {
+    "size": 32,
+    "widths": [
+     8,
+     16,
+     32
+    ],
+    "strides": [
+     2,
+     2,
+     2
+    ],
+    "val_cost": 5.536799315361575,
+    "bytes": 23712,
+    "mults": 165888,
+    "err": 7.007752609866635e-07
+   },
+   {
+    "size": 48,
+    "widths": [
+     8,
+     16,
+     24,
+     32
+    ],
+    "strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "val_cost": 5.382755669661961,
+    "bytes": 46852,
+    "mults": 580608,
+    "err": 1.0513525109390187e-06
+   }
+  ],
+  "trained_at": "2026-11-25 23:36:49",
+  "val_accuracy_at_half": 0.6666666666666666,
+  "test": {
+   "n": 594,
+   "accuracy": 0.6531986531986532,
+   "recall_damaged": 0.9799426934097422,
+   "false_reject_rate": 0.8122448979591836
+  },
+  "test_accuracy_at_half": 0.6666666666666666
+ },
+ "cascade": {
+  "edges": [
+   1.3888371991236446,
+   3.54246602782414,
+   7.093356847763061
+  ],
+  "quantiles": [
+   0.1,
+   0.25,
+   0.5
+  ],
+  "levels": [
+   {
+    "n_damaged": 342,
+    "n_good": 246,
+    "edge_missed": 2,
+    "edge_false_reject": 183,
+    "gateway_missed": 4,
+    "gateway_false_reject": 45,
+    "cloud_missed": 4,
+    "cloud_false_reject": 23
+   },
+   {
+    "n_damaged": 253,
+    "n_good": 41,
+    "edge_missed": 0,
+    "edge_false_reject": 27,
+    "gateway_missed": 0,
+    "gateway_false_reject": 2,
+    "cloud_missed": 2,
+    "cloud_false_reject": 0
+   },
+   {
+    "n_damaged": 57,
+    "n_good": 90,
+    "edge_missed": 1,
+    "edge_false_reject": 66,
+    "gateway_missed": 1,
+    "gateway_false_reject": 12,
+    "cloud_missed": 2,
+    "cloud_false_reject": 6
+   },
+   {
+    "n_damaged": 17,
+    "n_good": 71,
+    "edge_missed": 0,
+    "edge_false_reject": 54,
+    "gateway_missed": 1,
+    "gateway_false_reject": 14,
+    "cloud_missed": 0,
+    "cloud_false_reject": 8
+   },
+   {
+    "n_damaged": 15,
+    "n_good": 44,
+    "edge_missed": 1,
+    "edge_false_reject": 36,
+    "gateway_missed": 2,
+    "gateway_false_reject": 17,
+    "cloud_missed": 0,
+    "cloud_false_reject": 9
+   }
+  ],
+  "names": [
+   "unknown",
+   "sure",
+   "fairly sure",
+   "unsure",
+   "very unsure"
+  ],
+  "n_photos": 588,
+  "thresholds": {
+   "edge": 0.05,
+   "gateway": 0.06,
+   "cloud": 0.15999999999999998
+  },
+  "made": "2026-11-25 23:37",
+  "photo_kind": "public"
+ }
+}

@@ -1,0 +1,153 @@
+{
+ "generated": "2026-11-25 23:37",
+ "photos": "data\\public",
+ "photo_kind": "public",
+ "n_val": 588,
+ "n_test": 594,
+ "p_damaged_assumed": 0.3,
+ "edges": [
+  1.3888371991236446,
+  3.54246602782414,
+  7.093356847763061
+ ],
+ "thresholds": {
+  "edge": 0.05,
+  "gateway": 0.06,
+  "cloud": 0.15999999999999998
+ },
+ "agreement": {
+  "same_verdict": 0.8973063973063973,
+  "cloud_fixes_gateway": 0.07912457912457913,
+  "cloud_makes_it_worse": 0.02356902356902357,
+  "both_wrong": 0.021885521885521887
+ },
+ "levels": [
+  {
+   "level": 1,
+   "name": "sure",
+   "n": 335,
+   "share": 0.44577159230454355,
+   "gateway_right": 0.9701492537313433,
+   "cloud_right": 0.982089552238806,
+   "cost_gateway": 0.6525204129273389,
+   "cost_cloud": 0.3890703761015978,
+   "gain_per_call": 0.2634500368257411,
+   "gain_per_call_val": -0.34468209008310957
+  },
+  {
+   "level": 2,
+   "name": "fairly sure",
+   "n": 135,
+   "share": 0.2678591895210806,
+   "gateway_right": 0.9333333333333333,
+   "cloud_right": 0.9703703703703703,
+   "cost_gateway": 1.400521593596931,
+   "cost_cloud": 1.0673764365916976,
+   "gain_per_call": 0.3331451570052335,
+   "gain_per_call_val": 0.2782297735370223
+  },
+  {
+   "level": 3,
+   "name": "unsure",
+   "n": 73,
+   "share": 0.164625460499386,
+   "gateway_right": 0.7945205479452054,
+   "cloud_right": 0.9041095890410958,
+   "cost_gateway": 4.909890051460593,
+   "cost_cloud": 1.8746357745640516,
+   "gain_per_call": 3.0352542768965414,
+   "gain_per_call_val": 1.1694950681426604
+  },
+  {
+   "level": 4,
+   "name": "very unsure",
+   "n": 51,
+   "share": 0.12174375767498975,
+   "gateway_right": 0.49019607843137253,
+   "cloud_right": 0.803921568627451,
+   "cost_gateway": 8.133076142082665,
+   "cost_cloud": 3.5896868437796723,
+   "gain_per_call": 4.543389298302992,
+   "gain_per_call_val": 2.81542530775032
+  }
+ ],
+ "curve": [
+  {
+   "share_pct": 0,
+   "accuracy": 0.898989898989899,
+   "cost": 2.517724109701187,
+   "accuracy_random": 0.8989898989898991,
+   "cost_random": 2.5177241097011875
+  },
+  {
+   "share_pct": 5,
+   "accuracy": 0.9191919191919192,
+   "cost": 2.0027015963978716,
+   "accuracy_random": 0.9020959595959599,
+   "cost_random": 2.4469324600900535
+  },
+  {
+   "share_pct": 10,
+   "accuracy": 0.9276094276094277,
+   "cost": 1.8024559967253377,
+   "accuracy_random": 0.9045454545454547,
+   "cost_random": 2.389005321326238
+  },
+  {
+   "share_pct": 15,
+   "accuracy": 0.9326599326599326,
+   "cost": 1.659353254195661,
+   "accuracy_random": 0.9074831649831652,
+   "cost_random": 2.3164797380270157
+  },
+  {
+   "share_pct": 20,
+   "accuracy": 0.9393939393939394,
+   "cost": 1.4302906262791648,
+   "accuracy_random": 0.9107154882154882,
+   "cost_random": 2.2415366352844863
+  },
+  {
+   "share_pct": 25,
+   "accuracy": 0.9427609427609428,
+   "cost": 1.3731477691363079,
+   "accuracy_random": 0.9131902356902356,
+   "cost_random": 2.1837548096602535
+  },
+  {
+   "share_pct": 30,
+   "accuracy": 0.9444444444444444,
+   "cost": 1.40196479738027,
+   "accuracy_random": 0.91510101010101,
+   "cost_random": 2.1550564879246825
+  },
+  {
+   "share_pct": 40,
+   "accuracy": 0.9461279461279462,
+   "cost": 1.3733933688088413,
+   "accuracy_random": 0.9218097643097641,
+   "cost_random": 1.9809414654113795
+  },
+  {
+   "share_pct": 50,
+   "accuracy": 0.9478114478114478,
+   "cost": 1.3448219402374129,
+   "accuracy_random": 0.9268771043771042,
+   "cost_random": 1.879733524355301
+  },
+  {
+   "share_pct": 75,
+   "accuracy": 0.9528619528619529,
+   "cost": 1.2591076545231272,
+   "accuracy_random": 0.9408754208754209,
+   "cost_random": 1.5411584117887844
+  },
+  {
+   "share_pct": 100,
+   "accuracy": 0.9545454545454546,
+   "cost": 1.2305362259516985,
+   "accuracy_random": 0.9545454545454549,
+   "cost_random": 1.2305362259516988
+  }
+ ]
+}
