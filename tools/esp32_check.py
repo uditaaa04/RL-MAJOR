@@ -5,7 +5,7 @@ Test the ESP32 edge node on its own (no belt program, no cloud).
     python -m tools.esp32_check --port COM5
 
 What it checks, in order: the board answers, the tiny model loads, 30 photos are timed, the reject arm
-swings, the two LEDs light, then for 10 seconds it prints every IR sensor event so you can wave a hand
+swings, then for 10 seconds it prints every IR sensor event so you can wave a hand
 in front of each sensor. The belt runs slowly during those 10 seconds.
 """
 from __future__ import annotations
@@ -43,6 +43,10 @@ def main():
     print(f"1. board answers: {link.firmware}   free memory {st['free_bytes'] if st else '?'} bytes")
     if model is None:
         print("2. tiny model: NONE on this PC yet (models/edge_tiny.bin). Train it, then run this again.")
+    elif not link.model_loaded:
+        print("2. tiny model: the board REFUSED it (the reason is in the WARNING line above). "
+              "Unplug the board, plug it in again and run this check again.")
+        ok = False
     else:
         print(f"2. tiny model loaded: {model.size}x{model.size} grey photo, {model.params} numbers, {len(model.blob)} bytes")
         rng = np.random.default_rng(0)
@@ -69,17 +73,14 @@ def main():
         for _ in range(2):
             link.push(int(cfg.get("esp32", {}).get("servo_hold_ms", 350)))
             time.sleep(1.0)
-        print("5. LEDs: green, red, off")
-        for n in (1, 2, 0):
-            link.led(n)
-            time.sleep(0.6)
         seen = {"C": 0, "A": 0}
 
         def ev(tag, t):
             seen[tag] += 1
             print(f"   sensor event: {'box under the CAMERA (IR 1)' if tag == 'C' else 'box at the ARM (IR 2)'}")
         link.on_event = ev
-        print("6. belt runs slowly for 10 seconds. Wave a hand in front of each IR sensor now ...")
+        print("5. belt runs slowly for 10 seconds (it only moves with 12 V on the motor driver). "
+              "Wave a hand in front of each IR sensor now ...")
         link.set_duty(round(0.5 * 255))
         time.sleep(10)
         link.set_duty(0)

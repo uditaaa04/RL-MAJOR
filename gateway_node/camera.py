@@ -65,7 +65,14 @@ class Camera:
     # ------------------------------------------------------------------ USB webcam
     def _open_usb(self, first=False) -> bool:
         cv2, c = self.cv2, self.cfg
-        dev = webcam.find_device(c.get("usb_device", "auto"), int(c.get("usb_index", 0)))
+        if not first and self.device is not None and not webcam.is_linux():
+            dev = self.device                      # re-connect: the same camera number as before
+        else:
+            dev = webcam.find_device(c.get("usb_device", "auto"), int(c.get("usb_index", 0)), cv2)
+            if self.verbose and first and not webcam.is_linux() and str(c.get("usb_device", "auto")).strip().lower() in ("", "auto"):
+                print(f"[camera] camera.usb_device is 'auto': using camera number {dev} (the last camera Windows lists; "
+                      f"a laptop's own camera is normally 0, a plugged-in USB webcam comes after it). "
+                      f"Wrong camera? Set camera.usb_device to the number you want in config/system.yaml.")
         if webcam.is_linux():
             cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         elif webcam.is_windows():                  # DirectShow opens in under a second; the default can take 10 s
@@ -78,8 +85,9 @@ class Camera:
         if not cap.isOpened():
             cap.release()
             if first:
-                raise SystemExit(f"USB webcam not found at {dev}. Is it plugged in?  Check with:  "
-                                 f"python -m tools.webcam_check --list")
+                raise SystemExit(f"USB webcam not found at {dev}. Is it plugged in, and is no other program using "
+                                 f"it? Double-click CHECK_CAMERA.bat to see the cameras this laptop has "
+                                 f"(Linux: python -m tools.webcam_check --list).")
             return False
         fourcc = str(c.get("usb_fourcc", "MJPG") or "")
         if len(fourcc) == 4:                       # set the format BEFORE the size (UVC rule)

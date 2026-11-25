@@ -2,7 +2,7 @@
   Smart Conveyor QC  -  EDGE NODE (ESP32)
   =====================================================================
   What this board does
-    1. Runs the conveyor: belt motor, two IR sensors, reject arm (servo), two LEDs.
+    1. Runs the conveyor: belt motor, two IR sensors, reject arm (servo).
     2. Runs the TINY edge model: the gateway laptop sends a very small grey photo,
        the ESP32 answers "chance this box is damaged" a few milliseconds later.
     3. Safety: if the gateway laptop goes silent for 3 seconds, the belt stops.
@@ -19,7 +19,6 @@
     K <duty>         keep-alive + belt speed 0..255 (sent by the gateway every second)
     B <duty>         belt speed 0..255
     P [hold_ms]      push the reject arm out and back
-    L <0|1|2>        LEDs: 0 off, 1 good (green), 2 damaged (red)
     S                status                -> S <ir_camera> <ir_arm> <duty> <free memory> <uptime ms>
     C <name> <value> setting: servo_rest, servo_push (degrees), ir_low (1 = sensor gives LOW on a box),
                      debounce_ms
@@ -46,12 +45,15 @@
 #define PIN_MOTOR_ENA   25      // belt speed, PWM: HW-039 (BTS7960) RPWM, or L298N ENA (pull its jumper off)
 #define PIN_MOTOR_IN1   26      // L298N IN1 only. With the HW-039 leave this pin empty (it still switches, harmless)
 #define PIN_MOTOR_IN2   27      // L298N IN2 only. With the HW-039 leave this pin empty
-#define PIN_LED_GOOD    16      // optional green LED (+ 220 to 1000 ohm resistor)
-#define PIN_LED_BAD     17      // optional red LED   (+ 220 to 1000 ohm resistor)
-#define PIN_LED_LINK     2      // blue LED on the board: ON = gateway connected
+#define PIN_LED_LINK     2      // the blue LED that is already ON the board: steady = gateway connected,
+                                // blinking = waiting for the gateway. Nothing to wire.
+// (There are no good / damaged lamps: the dashboard shows every verdict. GPIO 16 and 17 are free.)
 
 #define BAUD            460800
-#define FW_VERSION      1
+#define FW_VERSION      3       // 2: the two verdict LEDs (GPIO 16, 17) and the L command were removed
+                                // 3: a refused model or photo is read off the cable and thrown away (its bytes
+                                //    can no longer be mistaken for commands); a new model replaces the old one
+                                //    even when memory is short
 #define LINK_TIMEOUT_MS 3000    // no message from the gateway for this long -> stop the belt
 
 // ---------------- settings the gateway can change (command C) ----------------
@@ -311,10 +313,45 @@ static bool readBytesExact(uint8_t *dst, size_t n, uint32_t timeout_ms) {
   return true;
 }
 
+// The raw bytes of a refused model or photo are still on their way: read them and throw them away.
+// Otherwise loop() would read them as text and a stray "P" in them would swing the arm.
+// Stops after n bytes, or when the cable has been quiet for quiet_ms.
+static void skipBytes(long n, uint32_t quiet_ms) {
+  if (n > 1048576L) n = 1048576L;          // a header damaged on the cable can claim any size
+  uint32_t last = millis();
+  while (n > 0) {
+    int avail = Serial.available();
+    if (avail > 0) {
+      while (avail-- > 0 && n > 0) { Serial.read(); n--; }
+      last = millis();
+    } else {
+      if (millis() - last > quiet_ms) break;
+      pollIR();
+#ifdef HOST_TEST
+      hostIdle();
+#endif
+    }
+  }
+  g_last_rx = millis();
+}
+
+#ifdef HOST_TEST
+#define fwAlloc(n) hostMalloc(n)          // the PC test can make this fail on purpose
+#else
+#define fwAlloc(n) malloc(n)
+#endif
+
 static void cmdModel(long n, long want_sum) {
-  if (n < 20 || n > MODEL_MAX) { Serial.println("W ERR size"); return; }
-  uint8_t *blob = (uint8_t *)malloc((size_t)n);
-  if (!blob) { Serial.println("W ERR memory"); return; }
+  if (n < 20 || n > MODEL_MAX) { skipBytes(n, 200); Serial.println("W ERR size"); return; }
+  if (!g_act_a || !g_act_b) { skipBytes(n, 200); Serial.println("W ERR memory"); return; }   // no work memory at start-up
+  uint8_t *blob = (uint8_t *)fwAlloc((size_t)n);
+  if (!blob && g_blob) {                    // no room for the old and the new model together: the old one goes first
+    free(g_blob);
+    g_blob = NULL;
+    g_model_ok = false;
+    blob = (uint8_t *)fwAlloc((size_t)n);
+  }
+  if (!blob) { skipBytes(n, 200); Serial.println("W ERR memory"); return; }
   if (!readBytesExact(blob, (size_t)n, 1500)) { free(blob); Serial.println("W ERR timeout"); return; }
   if ((long)sum16(blob, (size_t)n) != want_sum) { free(blob); Serial.println("W ERR checksum"); return; }
   const char *err = modelParse(blob, (size_t)n);   // changes nothing if the file is refused
@@ -330,11 +367,11 @@ static void cmdModel(long n, long want_sum) {
 
 static void cmdInfer(long id, long n, long want_sum) {
   uint32_t t0 = millis();
-  if (n < 1 || n > IMG_MAX) { Serial.print("R "); Serial.print(id); Serial.println(" ERR size"); return; }
+  if (n < 1 || n > IMG_MAX) { skipBytes(n, 200); Serial.print("R "); Serial.print(id); Serial.println(" ERR size"); return; }
   if (!readBytesExact(g_img, (size_t)n, 300)) { Serial.print("R "); Serial.print(id); Serial.println(" ERR timeout"); return; }
   uint32_t rx_ms = millis() - t0;
   if ((long)sum16(g_img, (size_t)n) != want_sum) { Serial.print("R "); Serial.print(id); Serial.println(" ERR checksum"); return; }
-  if (!g_model_ok) { Serial.print("R "); Serial.print(id); Serial.println(" ERR nomodel"); return; }
+  if (!g_model_ok || !g_act_a || !g_act_b) { Serial.print("R "); Serial.print(id); Serial.println(" ERR nomodel"); return; }
   if (n != (long)g_in_size * g_in_size * g_in_ch) { Serial.print("R "); Serial.print(id); Serial.println(" ERR shape"); return; }
   uint32_t t1 = micros();
   float p = modelRun(g_img);
@@ -374,10 +411,6 @@ static void handleLine(char *line) {
       break;
     case 'P':
       armPush(n >= 1 && a > 0 ? (uint32_t)a : 350);
-      break;
-    case 'L':
-      digitalWrite(PIN_LED_GOOD, a == 1 ? HIGH : LOW);
-      digitalWrite(PIN_LED_BAD, a == 2 ? HIGH : LOW);
       break;
     case 'S':
       Serial.print("S ");
@@ -426,8 +459,6 @@ void setup() {
   pinMode(PIN_IR_ARM, INPUT_PULLUP);
   pinMode(PIN_MOTOR_IN1, OUTPUT);
   pinMode(PIN_MOTOR_IN2, OUTPUT);
-  pinMode(PIN_LED_GOOD, OUTPUT);
-  pinMode(PIN_LED_BAD, OUTPUT);
   pinMode(PIN_LED_LINK, OUTPUT);
   pwmBegin();
   motorApply(0);

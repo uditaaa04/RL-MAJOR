@@ -344,9 +344,15 @@ def main():
     print("[main] belt running - Ctrl+C to stop")
     t_start = time.time()
     last_n = -1
+    # the launcher's "please stop" (Windows can only kill a program, and a killed gateway cannot switch the
+    # belt off or save what the agent learned): it creates this file, we stop by ourselves
+    stop_file = os.environ.get("CONVEYOR_STOP_FILE") or ""
     try:
         while True:
             time.sleep(0.5)
+            if stop_file and os.path.exists(stop_file):
+                print("[main] stop asked by the launcher")
+                break
             st = pipe.stats
             if st["n"] != last_n and st["n"] % 10 == 0 and st["n"] > 0:
                 last_n = st["n"]

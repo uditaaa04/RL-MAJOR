@@ -21,7 +21,7 @@ calls; an ESP32 runs the belt and takes over the checking when the laptop is ove
 ### 2. "What are the three nodes and what does each one do?"
 | Node | Hardware | Job | Model |
 |---|---|---|---|
-| Edge | ESP32 on the belt | two IR sensors, belt motor, reject arm, LEDs, safety stop, **and** a last-resort damage check | tiny CNN, 11,705 numbers, 48 x 48 grey picture |
+| Edge | ESP32 on the belt | two IR sensors, belt motor, reject arm, safety stop, **and** a last-resort damage check | tiny CNN, 11,705 numbers, 48 x 48 grey picture |
 | Gateway | laptop | USB webcam, talks to both sides, runs the Q-learning agent, **checks every box first** | MobileNetV3-Small, 128 px |
 | Cloud | AWS EC2 (Mumbai) | **second opinion** on the boxes it is asked about, dashboard, backups | MobileNetV3-Large, 160 px |
 
@@ -122,7 +122,7 @@ on every kind of box.**
 
 ### 14. "How does the laptop talk to the ESP32?"
 One USB cable, serial at 460,800 baud, short text lines. The laptop sends: keep-alive with belt speed, push
-the arm, LEDs, settings, the model file, a photo. The ESP32 sends: "box under the camera", "box at the arm",
+the arm, settings, the model file, a photo. The ESP32 sends: "box under the camera", "box at the arm",
 and the answer to each photo. Every block of bytes has a checksum.
 
 ### 15. "What if the laptop crashes, or the ESP32 resets?"
@@ -141,7 +141,8 @@ ESP32's sensors, the webcam and the cloud. Anything pretend (no board plugged in
 ### 18. "How is the belt wired?"
 ESP32 DevKit V1 on the laptop's USB (power and data). Two IR sensors on GPIO 32 and 33, the reject servo on
 GPIO 18 with its own 5 V from a buck converter, the 12 V belt motor through an HW-039 (BTS7960) driver whose
-speed input is GPIO 25, two LEDs on GPIO 16 and 17. Sensors and driver logic run on 3.3 V, every ground is
+speed input is GPIO 25. There are no good / damaged lamps: the dashboard shows every verdict (the blue light
+on the board shows the link to the laptop). Sensors and driver logic run on 3.3 V, every ground is
 joined, 12 V never touches the ESP32. The wiring guide was checked pin by pin against the firmware
 (`docs/hardware/`). With only one IR sensor the arm can be fired by time instead (`conveyor.arm_sensor: false`).
 Not yet built: say so.

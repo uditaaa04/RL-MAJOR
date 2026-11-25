@@ -54,9 +54,11 @@ models:
 # ---------------- camera ----------------
 camera:
   source: usb              # usb (webcam on the gateway) | mock (pretend belt, photos from disk)
-  usb_device: auto         # auto = first USB webcam; or a fixed name from  python -m tools.webcam_check --list
-                           # e.g. /dev/v4l/by-id/usb-046d_C270_HD_WEBCAM-video-index0 (survives re-plugging)
-  usb_index: 0             # only used if no USB webcam is found by "auto"
+  usb_device: auto         # auto = on Windows the LAST camera (a laptop's own camera is normally 0, a plugged-in USB
+                           # webcam comes after it). Wrong one? Write the number here: 0, 1, 2 ...
+                           # Double-click CHECK_CAMERA.bat to SEE what this camera sees.
+                           # (Linux: auto = first USB webcam, or a /dev/v4l/by-id/... name)
+  usb_index: 0             # only used if "auto" finds no camera at all
   usb_fourcc: MJPG         # MJPG = 30 fps at 640x480 on every UVC webcam (YUYV is often only 10-15 fps)
   usb_fps: 30
   usb_warmup_frames: 5

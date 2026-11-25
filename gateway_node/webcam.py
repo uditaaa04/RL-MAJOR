@@ -65,16 +65,37 @@ def list_devices() -> list[dict]:
     return out
 
 
-def find_device(spec="auto", index: int = 0):
+def list_cameras(cv2, max_n: int = 5) -> list[int]:
+    """Windows / macOS: the camera numbers 0 .. max_n-1 that open. Every number is tried: a camera that another
+    program is using does not open, and the webcam after it must still be found. Cameras are only opened and
+    closed here: no picture is taken from them."""
+    found = []
+    for i in range(max_n):
+        try:
+            cap = cv2.VideoCapture(i, getattr(cv2, "CAP_DSHOW", 700)) if is_windows() else cv2.VideoCapture(i)
+            ok = bool(cap.isOpened())
+            cap.release()
+        except Exception:
+            ok = False
+        if ok:
+            found.append(i)
+    return found
+
+
+def find_device(spec="auto", index: int = 0, cv2=None):
     """What to give cv2.VideoCapture.
 
-    spec "auto"            first USB webcam picture node (Linux), else `index`
+    spec "auto"            Linux: the first USB webcam picture node.
+                           Windows / macOS (cv2 given): the LAST camera that opens. A laptop's built-in
+                           camera is normally number 0 and a plugged-in USB webcam comes after it.
+                           Nothing opens, or no cv2 given: `index`.
     spec "/dev/..."        that device (a /dev/v4l/by-id/... name survives re-plugging)
     spec 0, 1, "2" ...     /dev/video<N> on Linux, camera number N elsewhere
     """
     if spec is None or str(spec).strip().lower() in ("", "auto"):
         if not is_linux():
-            return int(index)
+            cams = list_cameras(cv2) if cv2 is not None else []
+            return cams[-1] if cams else int(index)
         usb = [d for d in list_devices() if d["usb"] and d["capture"]]
         if usb:
             return usb[0]["dev"]

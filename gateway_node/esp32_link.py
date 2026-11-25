@@ -5,7 +5,7 @@ The gateway's side of the USB cable to the ESP32 edge node.
                    receives answers and belt events. Re-connects by itself if the cable is pulled
                    or the board resets.
   Esp32Hardware  - the belt as the rest of the gateway sees it (same methods as the pretend belt):
-                   belt speed, reject arm, LEDs, "box at camera" / "box at arm" events.
+                   belt speed, reject arm, "box at camera" / "box at arm" events.
   EdgeTiny       - "check this photo on the ESP32", one photo at a time. Without a board it runs the
                    same tiny model on the gateway and waits as long as the cable and the ESP32 would
                    need (clearly marked as emulated in the logs and on the dashboard).
@@ -70,7 +70,9 @@ class Esp32Link:
             return self._opener()
         import serial
         s = serial.Serial()
-        s.port, s.baudrate, s.timeout, s.write_timeout = self.port, self.baud, 0.1, 1.0
+        # write_timeout: Windows cuts a write off after this long. The tiny model is about 47 kB and needs a
+        # full second on the cable at 460800 baud, so 1 s would cut it off right at the end. 6 s is safe.
+        s.port, s.baudrate, s.timeout, s.write_timeout = self.port, self.baud, 0.1, 6.0
         s.dtr = False                      # do not reset the board just by opening the port
         s.rts = False
         s.open()
@@ -106,7 +108,7 @@ class Esp32Link:
         try:
             if self.ser is not None:
                 with self._wlock:
-                    self.ser.write(b"K 0\nL 0\n")
+                    self.ser.write(b"K 0\n")               # belt off before the port closes
                     self.ser.flush()
         except Exception:
             pass
@@ -199,12 +201,6 @@ class Esp32Link:
         except Esp32Error as e:
             if self.verbose:
                 print(f"[esp32] push not sent: {e}")
-
-    def led(self, which: int):
-        try:
-            self.send(f"L {int(which)}")
-        except Esp32Error:
-            pass
 
     def status(self) -> dict | None:
         try:
@@ -336,9 +332,14 @@ def connect(cfg: dict, model_blob: bytes | None, port: str | None = None, verbos
         link.configure(servo_rest=e.get("servo_rest_deg", 0), servo_push=e.get("servo_push_deg", 80),
                        ir_low=1 if e.get("ir_active_low", True) else 0, debounce_ms=e.get("debounce_ms", 20))
         if model_blob is not None:
-            link.upload_model(model_blob)
+            try:
+                link.upload_model(model_blob)
+            except Esp32Error as ex:
+                # the belt, the sensors and the arm do not need the tiny model: carry on without it
+                print(f"[esp32] WARNING: {ex}. The belt, sensors and arm still work; no photo will be checked on "
+                      f"the ESP32 in this run. Unplug the board, plug it in again and restart to retry.")
         if verbose:
-            print(f"[esp32] connected on {p}: {link.firmware}" + ("  (tiny model loaded)" if model_blob else ""))
+            print(f"[esp32] connected on {p}: {link.firmware}" + ("  (tiny model loaded)" if link.model_loaded else ""))
         return link
     raise Esp32Error("no ESP32 answered. Tried " + "; ".join(tried))
 
@@ -393,7 +394,7 @@ class Esp32Hardware:
         self.link.push(self.hold_ms)
 
     def show(self, verdict: str):
-        self.link.led(1 if verdict == "good" else (2 if verdict == "damaged" else 0))
+        """The belt has no good / damaged lamps (firmware version 2): the dashboard shows every verdict."""
 
     def power_w(self):
         return None
@@ -401,7 +402,6 @@ class Esp32Hardware:
     def close(self):
         try:
             self.stop_belt()
-            self.link.led(0)
         except Exception:
             pass
 
@@ -451,6 +451,15 @@ class EdgeTiny:
             self.last_esp_ms = r["esp_us"] / 1000.0
         if ts:
             self.ewma_ms = 1000.0 * sorted(ts)[len(ts) // 2]
+            # a board slower than estimated must not fail every photo: allow 2.5 x what was just measured
+            need = 2.5 * max(ts)
+            if need > self.timeout:
+                print(f"[esp32] this board needs about {1000 * max(ts):.0f} ms per photo: answer time limit raised "
+                      f"from {1000 * self.timeout:.0f} to {1000 * need:.0f} ms")
+                self.timeout = need
+        else:
+            print("[esp32] WARNING: the board answered none of the test photos. It will not be used to check boxes "
+                  "until it answers (the belt, sensors and arm still work).")
 
     def submit(self, box_id: int, img, callback):
         with self._lock:

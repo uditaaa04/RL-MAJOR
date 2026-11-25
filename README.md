@@ -26,7 +26,7 @@ simulated; the photos and the models' verdicts are real. Nothing has run on real
 ```
  ESP32 (edge)  <---- USB cable ---->  laptop (gateway)  <---- Internet ---->  AWS (cloud)
  belt motor, 2 IR sensors,            webcam, Q-learning agent,               big model,
- reject arm, LEDs, tiny model         small model, link to both sides         dashboard, box log
+ reject arm, tiny model               small model, link to both sides         dashboard, box log
 ```
 
 The project's experiment is the **speed-accuracy trade-off between the three places**
@@ -69,7 +69,7 @@ Full guide: **[docs/CLOUD_AWS.md](docs/CLOUD_AWS.md)**.
 
 | Folder | What is inside |
 |---|---|
-| `esp32_node/` | **edge node firmware** (`esp32_node.ino`): belt, IR sensors, reject arm, LEDs, tiny-model engine, 3-second safety stop. No libraries needed. |
+| `esp32_node/` | **edge node firmware** (`esp32_node.ino`): belt, IR sensors, reject arm, tiny-model engine, 3-second safety stop. No libraries needed. |
 | `gateway_node/` | **gateway program**: `esp32_link.py` (USB link, pretend ESP32), `camera.py` (webcam), `gateway_worker.py` (small model), `cloud_client.py`, `netmon.py`, **`pipeline.py`** (box-by-box loop), `main.py` |
 | `server/` | **cloud node**: `/infer`, `/ping`, dashboard, API-key auth, SQLite box log, model registry, S3/CloudWatch |
 | `common/` | shared: state, reward, **Q-learning agent** (`rl.py`), baseline policies, **`tiny.py`** (the ESP32 model's file format and exact arithmetic), image I/O, fast algorithms |

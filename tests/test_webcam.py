@@ -431,3 +431,84 @@ def test_no_spot_check_without_known_truth_or_when_switched_off():
         pipe.on_box_at_camera(); pipe.on_box_at_arm()
         assert pol.spots == []
         pipe.close()
+
+
+# ----------------------------------------------------------------------------- which camera on a Windows laptop
+def test_windows_auto_picks_the_plugged_in_webcam_not_the_laptops_own(monkeypatch):
+    """Windows lists the laptop's own camera as 0 and a plugged-in USB webcam after it: 'auto' takes the last."""
+    from gateway_node import webcam
+
+    class Cap:
+        opened = []
+
+        def __init__(self, dev, *a):
+            self.dev = dev
+            Cap.opened.append(dev)
+
+        def isOpened(self):
+            return self.dev in (0, 1)                # two cameras on this PC
+
+        def release(self):
+            pass
+
+    cv2 = types.SimpleNamespace(VideoCapture=Cap, CAP_DSHOW=700)
+    monkeypatch.setattr(webcam, "is_linux", lambda: False)
+    monkeypatch.setattr(webcam, "is_windows", lambda: True)
+    assert webcam.list_cameras(cv2) == [0, 1] and Cap.opened == [0, 1, 2, 3, 4]   # every number is tried
+    busy = Cap.isOpened
+    Cap.isOpened = lambda self: self.dev == 1        # the laptop's own camera is in use by a video call
+    assert webcam.list_cameras(cv2) == [1] and webcam.find_device("auto", 0, cv2) == 1
+    Cap.isOpened = busy
+    assert webcam.find_device("auto", 0, cv2) == 1
+    assert webcam.find_device(0, 0, cv2) == 0 and webcam.find_device("1", 0, cv2) == 1   # a number always wins
+    Cap.isOpened = lambda self: False
+    assert webcam.find_device("auto", 0, cv2) == 0                           # nothing opens: the fallback number
+    assert webcam.find_device("auto", 3) == 3                                # no OpenCV given: the fallback number
+
+
+def test_windows_camera_reconnects_to_the_same_number(monkeypatch):
+    from gateway_node import webcam
+    monkeypatch.setattr(webcam, "is_linux", lambda: False)
+    monkeypatch.setattr(webcam, "is_windows", lambda: True)
+    FakeCapture.opened, FakeCapture.fail_after = 0, None
+    cam = usb_camera()
+    try:
+        first = cam.device
+        assert isinstance(first, int)
+        n = FakeCapture.opened
+        cam._drop_usb()                                # the cable is pulled
+        t_end = time.time() + 3.0
+        while time.time() < t_end and cam.cam is None:
+            time.sleep(0.05)
+        assert cam.cam is not None and cam.device == first
+        assert FakeCapture.opened == n + 1             # one open, no new search through the cameras
+    finally:
+        cam.close()
+
+
+# ----------------------------------------------------------------------------- the arm sensor firing twice
+def test_arm_sensor_firing_twice_for_one_box_does_not_use_up_the_next_box():
+    import time
+    from common.policies import AlwaysGateway
+    from common.rl import RewardModel, StateSpace
+    from gateway_node.pipeline import Pipeline
+    with tempfile.TemporaryDirectory() as d:
+        cfg = load_config(overrides={"conveyor": {"min_box_gap_s": 0.25}})
+        reward = RewardModel(cfg["reward"], 0.3, {"recall_damaged": 0.9, "false_reject_rate": 0.06, "accuracy": 0.93},
+                             {"recall_damaged": 0.98, "false_reject_rate": 0.02, "accuracy": 0.98})
+        hw = StubHW()
+        pipe = Pipeline(cfg, hw, GoodCam(), StubEsp32(), StubGateway(), types.SimpleNamespace(inflight=0), StubNet(),
+                        AlwaysGateway(), reward, StateSpace(cfg["state_bins"]), d)
+        pipe.on_box_at_camera()                 # box 0
+        time.sleep(0.27)
+        pipe.on_box_at_camera()                 # box 1 (far enough behind to be a new box)
+        assert list(pipe.fifo) == [0, 1]
+        pipe.on_box_at_arm()                    # box 0 reaches the arm ...
+        time.sleep(0.03)
+        pipe.on_box_at_arm()                    # ... and the sensor fires again for the same box
+        assert list(pipe.fifo) == [1] and hw.pushes == 1       # box 1 is still waiting for ITS arrival
+        time.sleep(0.27)
+        pipe.on_box_at_arm()                    # box 1 really arrives
+        assert list(pipe.fifo) == [] and hw.pushes == 2
+        assert pipe.stats["n"] == 2 and pipe.stats["missed"] == 0
+        pipe.close()

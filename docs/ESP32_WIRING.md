@@ -1,6 +1,6 @@
 # ESP32 edge node: wiring and flashing
 
-The ESP32 runs the belt (motor, two IR sensors, reject arm, LEDs) and the tiny edge model.
+The ESP32 runs the belt (motor, two IR sensors, reject arm) and the tiny edge model.
 It talks to the gateway laptop over the **USB cable**. No Wi-Fi setup, no extra Arduino libraries.
 
 ## 1. Wiring
@@ -26,11 +26,13 @@ It was checked pin by pin against the firmware. This table is the short version.
 | | R_IS, L_IS | leave empty | |
 | | B+, B- | 12 V adapter +, - | Reversed + and - destroys the driver. |
 | | M+, M- | belt motor | Swap the two wires if the belt runs backwards. |
-| Green LED (optional) | + through 330 ohm | GPIO 16 (RX2) | Lights for a good box. 220 ohm to 1 kohm is fine. |
-| Red LED (optional) | + through 330 ohm | GPIO 17 (TX2) | Lights for a damaged box. |
 | ESP32 | USB | gateway laptop | Power and data. Use a data cable, not a charge-only cable. |
 
 **Join all grounds together**: ESP32 GND, 12 V adapter -, buck OUT-, servo, IR sensors, HW-039 GND.
+
+**No good / damaged LEDs.** The build guide PDF and the diagram still show a green and a red LED (wires 26
+and 27, GPIO 16 and 17) and a test step `L 1 / L 2 / L 0`. Skip all three: this build has no LEDs, the firmware
+(version 2 and later) never touches GPIO 16 or 17 and has no `L` command. The dashboard shows every verdict.
 
 GPIO 26 and 27 stay empty. The firmware still switches GPIO 26 on while the belt runs (that was the direction
 pin of the older L298N driver); with nothing wired there it does no harm. An L298N also still works:
@@ -71,10 +73,9 @@ Open **Tools > Serial Monitor**, set **460800 baud** and **Newline**. Type a let
 
 | Type | What should happen |
 |---|---|
-| `H` | `H SCQC-ESP32 1 0 ...` comes back. The board is alive. |
+| `H` | `H SCQC-ESP32 3 0 ...` comes back (3 = firmware version). The board is alive. |
 | `P` | The reject arm swings out and back. |
 | `B 150` | The belt runs, then stops by itself after 3 seconds. That stop is the safety rule: no gateway, no belt. |
-| `L 1` / `L 2` / `L 0` | Green LED / red LED / both off. |
 | (hand in front of IR sensor 1) | `E C ...` appears. |
 | (hand in front of IR sensor 2) | `E A ...` appears. |
 | `S` | `S 0 0 ...`; the first two numbers turn 1 while a sensor sees something. |
@@ -86,7 +87,28 @@ Arm angle wrong? `C servo_push 60` then `P` to try values; put the good ones in 
 
 **Close the Serial Monitor before starting the gateway.** Only one program can use the port.
 
-## 4. Why USB and not Wi-Fi
+## 4. Bench test before the belt is built (ESP32 on USB, two IR sensors, webcam)
+
+No 12 V adapter is needed for this. Without 12 V the belt motor and the servo do not move (the servo's 5 V comes
+from the buck converter, which is fed by the 12 V adapter). **Do not power the servo from an ESP32 pin instead**:
+the board resets.
+
+1. `CHECK_ESP32.bat`: the board answers, the tiny model loads, 30 photos are timed (the first number measured
+   on the real board), both sensors show an event when a hand passes.
+2. `CHECK_CAMERA.bat`: one picture from every camera on the laptop. Type the number of the camera that looks at
+   the table, and the crop square.
+3. `START_REAL_LINE.bat`: hold a box under the webcam so that it also passes IR sensor 1. The photo is taken at
+   that moment. Move it past IR sensor 2 **within about 2 seconds**. The dashboard shows the photo, what the
+   laptop's model said, whether the cloud was asked, and the verdict. Too slow? The box is still counted, with
+   the note `arm-sensor-missed` in the log, and the arm is not asked to push. Press Enter in the black window to stop.
+4. `MEASURE_SPEED_VS_ACCURACY.bat` (line stopped, board still plugged in): the real time the ESP32 needs per
+   photo goes into the results table.
+
+What this test can and cannot show: sensors, photo, decision, verdict and the USB link are real. The timing is
+not: a hand is not a belt. And the models were trained on public photos, so their good / damaged verdicts on
+your own boxes can be wrong until they are retrained on your photos.
+
+## 5. Why USB and not Wi-Fi
 
 - The board is plugged into the laptop for power anyway.
 - Nothing to configure, and it works in a room with bad Wi-Fi.

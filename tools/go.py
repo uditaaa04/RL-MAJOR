@@ -4,7 +4,8 @@ One-click launcher - nothing to type. Used by the *.bat files in the project fol
     START_DEMO.bat                  -> python tools/go.py demo      (no hardware: pretend belt, this PC is also the cloud)
     START_REAL_LINE.bat             -> python tools/go.py line      (REAL belt: ESP32 on USB + webcam; cloud = AWS if set up, else this PC)
     START_DEMO_ON_AWS.bat           -> python tools/go.py aws       (pretend belt against the real AWS server)
-    CHECK_ESP32.bat                 -> python tools/go.py esp32     (finds the board, tests arm, LEDs, sensors, tiny model)
+    CHECK_ESP32.bat                 -> python tools/go.py esp32     (finds the board, tests arm, sensors, tiny model)
+    CHECK_CAMERA.bat                -> python tools/go.py camera    (one picture from every camera: which one the line uses, crop square)
     MEASURE_SPEED_VS_ACCURACY.bat   -> python tools/go.py tradeoff  (same photos at ESP32 / gateway / cloud: time and accuracy)
     TRAIN_ON_DOWNLOADED_PHOTOS.bat  -> python tools/go.py public    (public photo set -> all three models, agent, results)
     RETRAIN_ON_REAL_PHOTOS.bat      -> python tools/go.py retrain   (YOUR photos -> the same)
@@ -148,9 +149,42 @@ def spawn(name, args, env=None):
     e = dict(os.environ)
     e["PYTHONUNBUFFERED"] = "1"
     e.update(env or {})
+    stopfile = None
+    if name == "gateway":
+        # Windows cannot ask a program to stop politely, it can only kill it. The gateway looks for this file
+        # twice a second and then stops by itself: belt off at once, what the agent learned is saved.
+        stopfile = os.path.join(LOGS, "stop_gateway.flag")
+        try:
+            os.remove(stopfile)
+        except OSError:
+            pass
+        e["CONVEYOR_STOP_FILE"] = stopfile
     p = subprocess.Popen([PY] + args, cwd=ROOT, stdout=out, stderr=subprocess.STDOUT, env=e)
     p._logpath = path
+    p._stopfile = stopfile
     return p
+
+
+def ask_to_stop(procs, seconds=8.0):
+    """Let the gateway stop by itself (belt off, agent saved) before anything is killed."""
+    asked = []
+    for p in procs:
+        f = getattr(p, "_stopfile", None)
+        if f and p.poll() is None:
+            try:
+                with open(f, "w") as fh:
+                    fh.write("stop\n")
+                asked.append(p)
+            except OSError:
+                pass
+    t_end = time.time() + seconds
+    while asked and time.time() < t_end and any(p.poll() is None for p in asked):
+        time.sleep(0.2)
+    for p in asked:
+        try:
+            os.remove(p._stopfile)
+        except OSError:
+            pass
 
 
 def tail(path, n=25):
@@ -214,6 +248,7 @@ def hold(base, procs, key=""):
     except KeyboardInterrupt:
         pass
     say("Stopping ...")
+    ask_to_stop(procs)
     for p in procs:
         if p.poll() is None:
             p.terminate()
@@ -444,15 +479,39 @@ def mode_demo():
     hold(base, procs)
 
 
+def ensure_cv2():
+    """OpenCV reads the webcam. It is installed the first time a step needs the camera."""
+    if subprocess.call([PY, "-c", "import cv2"], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
+        say("Installing OpenCV for the webcam (once, needs the Internet) ...")
+        if run([PY, "-m", "pip", "install", "--disable-pip-version-check", "opencv-python-headless"]) != 0:
+            stop("OpenCV could not be installed (Internet?)")
+
+
+def mode_camera():
+    """One picture from every camera on this laptop: shows which one the real line uses and its crop square,
+    then asks for the right camera number and square and saves them. Run it by hand only (it uses the cameras)."""
+    ensure_env()
+    ensure_cv2()
+    if server_up(f"http://127.0.0.1:{PORT}"):
+        say("NOTE: a demo or the real line is still running on this PC. If the real line is running it holds the "
+            "camera, and the check will get no picture from it. Stop it first (press Enter in its window).")
+    say("Taking one picture from every camera on this laptop. The pictures stay on this PC (logs/camera_check).")
+    code = subprocess.call([PY, "-u", "-m", "tools.camera_check"], cwd=ROOT)    # not through run(): it asks questions
+    say(f"camera check ended with code {code}")
+    if code != 0:
+        stop("the camera check did not get a picture from the camera the real line uses (see above)")
+
+
 def mode_line():
     """THE REAL LINE: ESP32 on USB runs the belt, this laptop is the gateway (webcam + agent), the cloud is the
     AWS server if it was set up (START_DEMO_ON_AWS once), otherwise a server on this PC."""
     ensure_env()
-    if subprocess.call([PY, "-c", "import cv2"], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-        say("Installing OpenCV for the webcam (once) ...")
-        if run([PY, "-m", "pip", "install", "--disable-pip-version-check", "opencv-python-headless"]) != 0:
-            stop("OpenCV could not be installed (Internet?)")
+    ensure_cv2()
     ensure_ready()
+    if server_up(f"http://127.0.0.1:{PORT}"):
+        # a demo left open would keep sending its pretend boxes into the same dashboard, mixed with the real ones
+        stop("another run is still open on this PC (the demo, or the real line in another window). "
+             "Go to that window and press Enter to stop it, or close it. Then start this again.")
     procs = []
     c = aws_config()
     if c:
@@ -477,14 +536,14 @@ def mode_line():
                 p.terminate()
         stop("the gateway could not start (its last lines are above). Most common: the ESP32 is not plugged in, "
              "the Arduino Serial Monitor is still open, or the webcam is used by another program. "
-             "Double-click CHECK_ESP32.bat to test the board alone.")
+             "Double-click CHECK_ESP32.bat to test the board alone, CHECK_CAMERA.bat to test the camera alone.")
     webbrowser.open(f"{base}/?key={key}" if key else f"http://localhost:{PORT}")
     say("The belt is running. Put boxes on it.")
     hold(base, procs, key)
 
 
 def mode_esp32():
-    """Finds the ESP32, loads the tiny model, times it, moves the arm, blinks the LEDs, shows the two sensors."""
+    """Finds the ESP32, loads the tiny model, times it, moves the arm, shows the two sensors."""
     ensure_env()
     ensure_tiny()
     if run([PY, "-m", "tools.esp32_check"]) != 0:
@@ -965,7 +1024,7 @@ def mode_job():
 
 JOB_STEPS = ("tradeoff", "scores", "shift", "rebuild", "public", "benchmark", "test", "esp32", "packtiny")
 
-MODES = {"scores": mode_scores, "shift": mode_shift, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
+MODES = {"camera": mode_camera, "scores": mode_scores, "shift": mode_shift, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
          "test": mode_test, "retrain": mode_retrain, "public": mode_public, "benchmark": mode_benchmark,
          "remote": mode_remote,
          # names from the 2-node version, kept so a REMOTE_CONTROL window opened before the update still works:

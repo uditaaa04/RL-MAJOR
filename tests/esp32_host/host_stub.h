@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <string>
@@ -16,6 +17,7 @@
 #define OUTPUT 1
 
 static int host_pins[64];
+static int host_nomem = 0;                 // control line "nomem <k>": the next k model allocations fail
 static uint32_t host_pwm[64];
 static bool host_init_done = false;
 static std::string host_ctl;
@@ -43,13 +45,19 @@ static inline void host_poll_ctl() {
   while ((nl = host_ctl.find('\n')) != std::string::npos) {
     int pin = 0, v = 0;
     if (sscanf(host_ctl.substr(0, nl).c_str(), "pin %d %d", &pin, &v) == 2 && pin >= 0 && pin < 64) host_pins[pin] = v;
+    else if (sscanf(host_ctl.substr(0, nl).c_str(), "nomem %d", &v) == 1) host_nomem = v;
     host_ctl.erase(0, nl + 1);
   }
+}
+static inline void *hostMalloc(size_t n) {
+  host_poll_ctl();
+  if (host_nomem > 0) { host_nomem--; return NULL; }
+  return malloc(n);
 }
 static inline void pinMode(int, int) { host_init(); }
 static inline int digitalRead(int pin) { host_poll_ctl(); return host_pins[pin]; }
 static inline void digitalWrite(int pin, int v) {
-  if (host_pins[pin] != v && (pin == 16 || pin == 17)) fprintf(stderr, "led %d %d\n", pin, v);
+  if (pin == 16 || pin == 17) fprintf(stderr, "pin%d %d\n", pin, v);   // the firmware must never drive these (no LEDs)
   host_pins[pin] = v;
 }
 static inline void hostPwm(int pin, uint32_t duty) {

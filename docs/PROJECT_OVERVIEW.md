@@ -50,7 +50,7 @@ that they were not written for.
  ┌──────────── ESP32 (edge, on the belt) ────────────┐
  │ IR-1: box under the camera ─────────────────────────────► event
  │ IR-2: box at the reject arm ────────────────────────────► event
- │ belt motor (PWM), reject arm (servo), 2 LEDs  ◄────────── commands
+ │ belt motor (PWM), reject arm (servo)          ◄────────── commands
  │ tiny CNN: 32-48 px grey photo ─► chance damaged ◄──────── photo / ──► answer
  │ safety: gateway silent for 3 s ─► belt stops       │
  └──────────────────────┬─────────────────────────────┘

@@ -99,6 +99,7 @@ class Pipeline:
         self._imgs: dict = {}               # photos of boxes sent to the ESP32 or the cloud (for fallback)
         self.next_id = 0
         self.last_seen = 0.0
+        self.last_arm = 0.0                 # when the arm sensor last fired (to drop a double trigger)
         self.transit = None                 # measured camera->arm time (EWMA)
         self.stats = {"n": 0, "edge": 0, "gateway": 0, "cloud": 0, "missed": 0, "rejected": 0, "correct": 0,
                       "known": 0, "fallback": 0,
@@ -287,6 +288,13 @@ class Pipeline:
     def on_box_at_arm(self):
         now = time.perf_counter()
         with self.lock:
+            # A real arm sensor that fires twice within a moment saw ONE box twice (its edge, a dark print, the
+            # arm swinging back through the beam). Two boxes cannot be that close: the camera sensor would
+            # have dropped the second one too (min_box_gap_s). Without this the second firing would use up the
+            # verdict of the NEXT box.
+            if not self.arm_by_time and now - self.last_arm < 0.6 * self.min_gap:
+                return
+            self.last_arm = now
             if not self.fifo:
                 return
             box_id = self.fifo.popleft()

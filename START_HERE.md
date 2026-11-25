@@ -4,7 +4,7 @@ Three nodes:
 
 | Node | What it is | What it does |
 |---|---|---|
-| **Edge** | ESP32 on the belt | Runs the belt: motor, two IR sensors, reject arm, LEDs. Also has a tiny model for a quick look at a box. |
+| **Edge** | ESP32 on the belt | Runs the belt: motor, two IR sensors, reject arm. Also has a tiny model for a quick look at a box. |
 | **Gateway** | This laptop | Webcam, talks to the ESP32 (USB) and to the cloud (Internet). Its Q-learning agent picks, for every box, where the photo is checked. Has the small model. |
 | **Cloud** | AWS server | The big, most accurate model. Also serves the dashboard. |
 
@@ -13,7 +13,8 @@ Double-click these files in this folder.
 | File | What it does |
 |---|---|
 | `START_DEMO.bat` | The whole product with **no hardware**: pretend belt, this PC is also the cloud. Opens the dashboard. If an ESP32 is plugged in, its tiny model is really used. First run builds the Python environment (2-5 min, needs Internet). |
-| `CHECK_ESP32.bat` | Tests the ESP32 alone: finds it, loads the tiny model, times it, swings the arm, lights the LEDs, shows the two sensors. Run this after wiring. |
+| `CHECK_ESP32.bat` | Tests the ESP32 alone: finds it, loads the tiny model, times it, swings the arm, shows the two sensors. Run this after wiring. |
+| `CHECK_CAMERA.bat` | Takes one picture from every camera on this laptop and opens a page with them. Shows which camera the real line uses and its crop square. Type the right camera number and square in the black window; they are saved. The pictures stay on this PC. |
 | `START_REAL_LINE.bat` | **The real belt**: ESP32 on USB + webcam. Cloud is the AWS server if you have set it up, otherwise this PC. |
 | `MEASURE_SPEED_VS_ACCURACY.bat` | The experiment of this project: the same photos checked at ESP32, gateway and cloud. Writes `results/TRADEOFF.md` and the first table on the dashboard's Results page. |
 | `START_DEMO_ON_AWS.bat` | Pretend belt against the real AWS server. Asks for the server address and key once; the real line and the measurement use them from then on. |
@@ -30,14 +31,21 @@ Stop anything: press Enter in its black window.
    checks before power) and its circuit diagram. It was checked pin by pin against the ESP32 program.
    Then flash the ESP32: `docs/ESP32_WIRING.md` (short pin table, flashing, 2-minute test in the Serial Monitor).
 2. Close the Arduino Serial Monitor. Double-click `CHECK_ESP32.bat`. Fix anything it reports.
-3. Mount the webcam above the belt, plug it into this laptop.
-4. Double-click `START_REAL_LINE.bat`. Put boxes on the belt.
-5. Stop it, then double-click `MEASURE_SPEED_VS_ACCURACY.bat` for the real ESP32 timing.
+3. Mount the webcam above the belt, plug it into this laptop. Double-click `CHECK_CAMERA.bat`: pick the camera
+   that shows the belt and set the crop square so that a box fills it. Run it again after moving the camera or the lamp.
+4. Double-click `START_REAL_LINE.bat`. Put boxes on the belt. (A demo still open in another window must be
+   stopped first; the launcher says so.)
+5. Stop it (Enter: the belt stops within two seconds and what the agent learned is saved), then double-click
+   `MEASURE_SPEED_VS_ACCURACY.bat` for the real ESP32 timing.
+
+No belt yet? `docs/ESP32_WIRING.md`, section 4, is a bench test with only the ESP32, the two sensors and the webcam.
 
 Settings you may need (file `config/system.yaml`):
 - `esp32.servo_rest_deg`, `esp32.servo_push_deg`: arm angles.
 - `esp32.ir_active_low`: set `false` if a sensor fires when the box leaves instead of when it arrives.
-- `camera.roi`: the square of the webcam picture where the box is.
+- `camera.usb_device` and `camera.roi`: which camera, and the square of its picture where the box is. `CHECK_CAMERA.bat` sets both.
+- `camera.capture_delay_ms`: wait this long after IR sensor 1 fires before the photo is taken, so the box is in the middle of the square (0 = at once).
+- `conveyor.min_box_gap_s`: one box counted twice by a sensor? Raise it (keep it below the time between two boxes).
 - `conveyor.cam_to_arm_m` and `conveyor.speed_mps_at_full`: measure them, they set the deadline.
 - `conveyor.arm_sensor`: set `false` if you have only ONE IR sensor (under the camera). The arm is then fired by
   time, so the two numbers above must be measured well.
@@ -70,7 +78,9 @@ Pages:
 
 ## If something fails
 
-- Send the file `logs/go_<name>.log` (for example `go_demo.log`, `go_line.log`, `go_esp32.log`). It says exactly what went wrong.
+- Send the file `logs/go_<name>.log` (for example `go_demo.log`, `go_line.log`, `go_gateway.log`, `go_esp32.log`). It says exactly what went wrong.
+- "another run is still open on this PC": a demo or the real line is running in another window. Press Enter there.
+- The real line shows the wrong picture (your face, not the belt): double-click `CHECK_CAMERA.bat` and type the other camera's number.
 - "Python is not installed": install Python 3.12 from python.org, tick "Add python.exe to PATH".
 - "No ESP32 answered": firmware not flashed, Serial Monitor still open, charge-only USB cable, or missing CP210x / CH340 driver.
 - Files from the older Raspberry Pi version are moved to `_old_2node_version/` automatically. Nothing is deleted.
