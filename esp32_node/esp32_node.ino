@@ -533,16 +533,19 @@ static uint32_t g_pub_t = 0;
 static void publish() {
   if (millis() - g_pub_t < 250) return;   // 4 times a second is plenty (and spares the memory)
   g_pub_t = millis();
-  NET_LOCK();
+  // Ask the radio FIRST, outside the lock: NET_LOCK is a critical section (interrupts off), and a Wi-Fi call
+  // or a String inside it waits on another lock or allocates memory -> the ESP32 aborts and restarts.
+  char ip[16] = "-";
+  int rssi = 0;
+  if (g_state == NET_ONLINE) {
+    copyStr(ip, sizeof ip, WiFi.localIP().toString().c_str());
+    rssi = WiFi.RSSI();
+  }
+  NET_LOCK();                             // only plain copies in here
   copyStr(g_net.state, sizeof g_net.state, NET_NAMES[g_state]);
   g_net.hotspot = g_ap;
-  if (g_state == NET_ONLINE) {
-    copyStr(g_net.ip, sizeof g_net.ip, WiFi.localIP().toString().c_str());
-    g_net.rssi = WiFi.RSSI();
-  } else {
-    copyStr(g_net.ip, sizeof g_net.ip, "-");
-    g_net.rssi = 0;
-  }
+  copyStr(g_net.ip, sizeof g_net.ip, ip);
+  g_net.rssi = rssi;
   NET_UNLOCK();
 }
 

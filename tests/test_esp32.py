@@ -402,3 +402,19 @@ def test_wifi_firmware_compiles_against_stubs(tmp_path):
     with open(os.path.join(ROOT, "esp32_node", "secrets.example.h")) as f:
         ap = [ln for ln in f if ln.startswith("#define AP_PASS")][0].split('"')[1]
     assert len(ap) >= 8                       # Wi-Fi refuses a hotspot password shorter than 8 characters
+
+
+def test_wifi_lock_sections_hold_only_plain_copies():
+    """NET_LOCK() is a critical section (interrupts off). A Wi-Fi call, a String, Serial or malloc inside it
+    blocks on another lock or allocates -> the real ESP32 aborts and restarts (seen on the board: it went
+    online, then restarted every few seconds). The host stubs cannot catch that, so check the source."""
+    import re
+    src = open(os.path.join(ROOT, "esp32_node", "esp32_node.ino"), encoding="utf-8").read()
+    body = src.split("#define NET_UNLOCK()", 2)[-1]          # after the macro definitions
+    sections = re.findall(r"NET_LOCK\(\);(.*?)NET_UNLOCK\(\);", body, re.S)
+    assert len(sections) >= 6
+    banned = ("WiFi.", "String", "toString", "Serial.", "malloc", "new ", "delay(", "millis()", "g_prefs", "g_http",
+              "MDNS", "printf")
+    for sec in sections:
+        for word in banned:
+            assert word not in sec, f"'{word}' inside NET_LOCK ... NET_UNLOCK:\n{sec.strip()[:300]}"

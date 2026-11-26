@@ -102,6 +102,8 @@ def listen(port: str, seconds: float = 25.0) -> bool:
         print(f"Could not open {port} to check the board: {e}", flush=True)
         return False
     ok = False
+    boots = 0
+    crash_words = ("Guru Meditation", "assert failed", "Brownout", "abort()", "Backtrace", "panic", "rst:")
     try:
         s.reset_input_buffer()
         t_end = time.time() + seconds
@@ -121,8 +123,16 @@ def listen(port: str, seconds: float = 25.0) -> bool:
                     ok = True
                 elif line.startswith("# ") or line.startswith("N "):
                     print("  " + line, flush=True)
+                elif line.startswith("BOOT SCQC-ESP32"):
+                    boots += 1
+                    print(f"  board started ({line})", flush=True)
+                elif any(w in line for w in crash_words):
+                    print("  !! " + line[:160], flush=True)
     finally:
         s.close()
+    if boots > 1:
+        print(f"  WARNING: the board restarted {boots} times while it was being watched. Lines marked !! say why; "
+              "'Brownout' means the USB power is too weak (try another cable or port).", flush=True)
     return ok
 
 
