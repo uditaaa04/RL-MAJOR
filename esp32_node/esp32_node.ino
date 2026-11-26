@@ -251,7 +251,8 @@ static void pollIR() {
 
 // ---------------- the tiny model: a few 3x3 convolutions, average, one output ----------------
 #define MAX_CONV   4
-#define ACT_MAX    9216                    // most numbers one layer may produce
+#define ACT_MAX    4608                    // most numbers one layer may produce: 24x24x8 for the 48x48 model
+                                           // (2 buffers of this; 9216 left too little memory for https)
 #define IMG_MAX    (48 * 48 * 3)
 #define MODEL_MAX  65536
 
@@ -747,6 +748,14 @@ static void heartbeat() {
   g_net_kick = false;
   g_hb_last = now;
   if (!g_http_ready) {                    // one https connection, kept open: no new handshake every time
+    // a new https connection needs about 40 kB; with less, skip this time instead of risking the board
+    if (ESP.getFreeHeap() < 45000 || ESP.getMaxAllocHeap() < 20000) {
+      char m[40];
+      snprintf(m, sizeof m, "waiting: only %lu kB free", (unsigned long)(ESP.getFreeHeap() / 1024));
+      setCloudNote(m);
+      g_hb_wait_until = now + 10000;
+      return;
+    }
     if (g_tls == NULL) {
       g_tls = new WiFiClientSecure();
       if (g_insecure) g_tls->setInsecure();

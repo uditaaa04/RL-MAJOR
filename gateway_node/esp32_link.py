@@ -20,6 +20,10 @@ import time
 
 from common import tiny
 
+# lines the ESP32 itself prints when it crashes or resets (panic handler, brownout detector, asserts)
+CRASH_WORDS = ("Guru Meditation", "assert failed", "Brownout", "abort()", "Backtrace", "panic", "stack overflow",
+               "Stack canary", "rst:", "CORRUPT HEAP", "task_wdt")
+
 USB_HINTS = ("cp210", "ch340", "ch910", "ch343", "usb-serial", "usb serial", "silicon labs", "wch", "uart", "ftdi")
 
 
@@ -61,6 +65,7 @@ class Esp32Link:
         self.last_rx = 0.0
         self.firmware = ""
         self.resets = 0                    # times the board restarted while we were connected
+        self.last_free_bytes = None        # the board's free memory at the last "S" reading
         self.reinits = 0                   # times it was set up again after that
         self._threads = []
 
@@ -233,6 +238,7 @@ class Esp32Link:
     def status(self) -> dict | None:
         try:
             p = self.request("S", "S ", 0.5).split()
+            self.last_free_bytes = int(p[4])
             return {"ir_camera": p[1] == "1", "ir_arm": p[2] == "1", "duty": int(p[3]), "free_bytes": int(p[4]),
                     "uptime_ms": int(p[5])}
         except (Esp32Error, IndexError, ValueError):
@@ -317,7 +323,12 @@ class Esp32Link:
             self.model_loaded = False
             if self.connected:                      # a reset in the middle of a run (power dip, button)
                 self.resets += 1
+                fb = self.last_free_bytes
+                print(f"[esp32] the board restarted (#{self.resets})"
+                      + (f"; free memory just before: {fb // 1024} kB" if fb else ""))
                 threading.Thread(target=self._after_reset, daemon=True).start()
+        elif any(w in line for w in CRASH_WORDS):   # why the board restarted (printed by the ESP32 itself)
+            print(f"[esp32] !! {line[:200]}")
         else:
             self._replies.put(line)
 

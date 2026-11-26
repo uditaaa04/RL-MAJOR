@@ -71,7 +71,7 @@ struct HardwareSerial {
   size_t println() { return 0; }
 };
 extern HardwareSerial Serial;
-struct EspClass { uint32_t getFreeHeap() { return 0; } uint32_t getMinFreeHeap() { return 0; } };
+struct EspClass { uint32_t getFreeHeap() { return 0; } uint32_t getMinFreeHeap() { return 0; } uint32_t getMaxAllocHeap() { return 0; } };
 extern EspClass ESP;
 unsigned long millis();
 unsigned long micros();
