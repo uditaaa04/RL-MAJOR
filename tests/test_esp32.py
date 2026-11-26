@@ -207,7 +207,7 @@ def test_firmware_belt_events_arm_and_safety_stop(board):
         assert "pwm 18 4915" in log and log.index("pwm 18 4915") < len(log) - 1   # arm out (90 deg) ...
         assert log[-2 if log[-1] == "" else -1].startswith("pwm 18 1638")            # ... and back to rest (0 deg)
         assert not any(x.startswith("pin16") or x.startswith("pin17") for x in log)      # GPIO 16 / 17 are never touched
-        assert link.firmware.split()[2] == "3"                                           # H SCQC-ESP32 3 ...
+        assert link.firmware.split()[2] == "4"                                           # H SCQC-ESP32 4 ...
         assert link.status()["duty"] == 180
         # the gateway goes silent: the keep-alive stops -> the board stops the belt by itself after 3 s
         link._stop = True
@@ -270,7 +270,7 @@ def test_new_model_replaces_the_old_one_when_memory_is_short(board):
         assert "memory" in str(e.value) and not link.model_loaded
         st = link.status()
         assert st is not None and st["duty"] == 0 and arm_moves(board) == rest
-        assert "SCQC-ESP32 3 0" in link.request("H", "H SCQC-ESP32", 1.0)    # the board says: no model loaded
+        assert "SCQC-ESP32 4 0" in link.request("H", "H SCQC-ESP32", 1.0)    # the board says: no model loaded
         link.upload_model(a.blob)            # memory is back: works again
         assert abs(link.infer(px, 1.0)["p"] - a.predict_pixels(px)) < 2e-4
     finally:
@@ -358,3 +358,47 @@ def test_pretend_esp32_gives_the_same_answers_and_takes_cable_time():
     took = time.perf_counter() - t
     assert r["ok"] and r["emulated"] and abs(r["p_damaged"] - m.predict(img)) < 1e-9
     assert took >= 0.9 * (edge.link_s + edge.compute_s) and edge.ready
+
+
+# ----------------------------------------------------------------------------- firmware 4: Wi-Fi
+def test_wifi_commands_over_usb_do_not_disturb_the_belt(board):
+    """U / Y / N / V / X work over the cable (the PC build has no radio: Wi-Fi stays OFF), and the belt
+    protocol still answers normally around them."""
+    link = link_to(board)
+    try:
+        assert link.version == 4
+        assert link.set_cloud("https://smart-conveyor-cloud.onrender.com/", "k" * 64)    # 66-character line
+        w = link.wifi_status()
+        assert w == {"state": "OFF", "ip": None, "rssi": 0, "hotspot": False, "cloud_ok": False, "ssid": None}
+        assert link.request("V My Wifi 2.4G\tpass word 123", "OK", 1.0) == "OK"           # spaces in name and password
+        assert link.request("X", "OK", 1.0) == "OK"
+        assert link.request("U https://" + "a" * 110 + ".onrender.com", "OK", 1.0) == "OK"   # a long line is not cut off
+        assert link.request("U -", "OK", 1.0) == "OK"
+        st = link.status()
+        assert st is not None and st["duty"] == 0
+        link.set_duty(90)
+        time.sleep(0.2)
+        assert link.status()["duty"] == 90
+    finally:
+        link.close()
+
+
+def test_wifi_firmware_compiles_against_stubs(tmp_path):
+    """The Wi-Fi half of the firmware (not in the PC build) at least compiles cleanly against stand-ins with the
+    ESP32 core's signatures - with the defaults, and with a filled-in secrets.h."""
+    if shutil.which("g++") is None:
+        pytest.skip("needs g++")
+    d = tmp_path / "esp32_node"
+    d.mkdir()
+    for f in ("esp32_node.ino", "root_ca.h"):
+        shutil.copy(os.path.join(ROOT, "esp32_node", f), d / f)
+    cmd = ["g++", "-std=gnu++17", "-fsyntax-only", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
+           "-I", os.path.join(ROOT, "tests", "esp32_host", "wifi_check"), "-x", "c++", str(d / "esp32_node.ino")]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    shutil.copy(os.path.join(ROOT, "esp32_node", "secrets.example.h"), d / "secrets.h")
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    with open(os.path.join(ROOT, "esp32_node", "secrets.example.h")) as f:
+        ap = [ln for ln in f if ln.startswith("#define AP_PASS")][0].split('"')[1]
+    assert len(ap) >= 8                       # Wi-Fi refuses a hotspot password shorter than 8 characters

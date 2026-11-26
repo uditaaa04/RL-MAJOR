@@ -180,3 +180,58 @@ def test_results_endpoint_needs_key_and_returns_tables(client):
     assert "models" in d and set(d["models"]) <= {"edge", "gateway", "cloud"}
     if "e1" in d:                                  # shipped with the project
         assert {"scenario", "policy", "reward_mean", "miss_rate"} <= set(d["e1"][0])
+
+
+# ----------------------------------------------------------------------------- live updates + manual tests
+def test_state_long_poll_answers_at_once_on_a_new_box_and_waits_otherwise(client):
+    import threading
+    import time
+    s0 = client.get("/api/state", headers=H()).get_json()
+    assert "ver" in s0 and s0["lp"] is False                       # no "after": answers at once, as before
+    t = time.time()
+    s1 = client.get(f"/api/state?after={s0['ver']}&wait=0.6", headers=H()).get_json()
+    assert time.time() - t >= 0.5 and s1["lp"] is True and s1["ver"] == s0["ver"]   # nothing new: waited
+
+    def later():
+        time.sleep(0.2)
+        client.post("/api/events", json=[fake_event(1, random.Random(1))], headers=H())
+    threading.Thread(target=later).start()
+    t = time.time()
+    s2 = client.get(f"/api/state?after={s0['ver']}&wait=10", headers=H()).get_json()
+    assert time.time() - t < 3 and s2["ver"] > s0["ver"] and s2["all"]["n"] == 1   # woke up by the new box
+    s3 = client.get("/api/state?after=999999&wait=10", headers=H()).get_json()      # server restarted meanwhile
+    assert s3["ver"] < 999999                                                       # ... answers at once
+
+
+def test_control_long_poll_and_manual_test_buttons(client):
+    import threading
+    import time
+    c0 = client.get("/api/control", headers=H())
+    assert c0.headers["X-Long-Poll"] == "0"
+    c0 = c0.get_json()
+    assert c0["arm_test"] == 0 and c0["check_now"] == 0 and c0["belt_n"] == 0 and "cver" in c0
+
+    def press():
+        time.sleep(0.2)
+        client.post("/api/control", json={"arm_test": 1, "belt_on": "yes", "belt_n": 3, "check_now": "x"}, headers=H())
+    threading.Thread(target=press).start()
+    t = time.time()
+    r = client.get(f"/api/control?after={c0['cver']}&wait=10", headers=H())
+    c1 = r.get_json()
+    assert time.time() - t < 3 and r.headers["X-Long-Poll"] == "1"
+    assert c1["arm_test"] == 1 and c1["belt_on"] is True and c1["belt_n"] == 3
+    assert c1["check_now"] == 0                                    # not a number: ignored
+    # a status from the gateway changes the state but not the controls: a waiting gateway is not woken by it
+    client.post("/api/status", json={"policy": "x"}, headers=H())
+    assert client.get("/api/control", headers=H()).get_json()["cver"] == c1["cver"]
+
+
+def test_esp32_wifi_readings_need_the_key_and_keep_known_fields_only(client):
+    d = {"fw": 4, "ir_camera": 1, "ir_arm": 0, "duty": 0, "pushes": 3, "wifi": "ONLINE", "ip": "192.168.1.9",
+         "rssi": -55, "ssid": "Hotspot", "cloud": "ok, 80 ms", "evil": "x" * 5000, "count_camera": "7"}
+    assert client.post("/api/edge", json=d).status_code == 401
+    assert client.post("/api/edge", json=d, headers=H()).status_code == 200
+    e = client.get("/api/state", headers=H()).get_json()["edge_wifi"]
+    assert e["ir_camera"] == 1 and e["count_camera"] == 7 and e["ip"] == "192.168.1.9" and "evil" not in e
+    assert e["age_s"] < 2
+    assert client.post("/api/edge", json=[1, 2], headers=H()).status_code == 400

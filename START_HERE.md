@@ -6,7 +6,7 @@ Three nodes:
 |---|---|---|
 | **Edge** | ESP32 on the belt | Runs the belt: motor, two IR sensors, reject arm. Also has a tiny model for a quick look at a box. |
 | **Gateway** | This laptop | Webcam, talks to the ESP32 (USB) and to the cloud (Internet). Its Q-learning agent picks, for every box, where the photo is checked. Has the small model. |
-| **Cloud** | AWS server | The big, most accurate model. Also serves the dashboard. |
+| **Cloud** | Render server (Singapore), https://smart-conveyor-cloud.onrender.com | The big, most accurate model. Also serves the dashboard. |
 
 Double-click these files in this folder.
 
@@ -16,9 +16,11 @@ Double-click these files in this folder.
 | `FIRST_HARDWARE_TEST.bat` | **The whole first hardware test in one window.** Installs what is missing, finds the ESP32, tests the board and the two sensors, checks the camera, runs the real line, then measures speed against accuracy on the real ESP32. It says what to do at each point. The ESP32 must be flashed first. |
 | `CHECK_ESP32.bat` | Tests the ESP32 alone: finds it, loads the tiny model, times it, swings the arm, shows the two sensors. Run this after wiring. |
 | `CHECK_CAMERA.bat` | Takes one picture from every camera on this laptop and opens a page with them. Shows which camera the real line uses and its crop square. Type the right camera number and square in the black window; they are saved. The pictures stay on this PC. |
-| `START_REAL_LINE.bat` | **The real belt**: ESP32 on USB + webcam. Cloud is the AWS server if you have set it up, otherwise this PC. |
+| `FLASH_ESP32.bat` | Puts **firmware 4** on the ESP32 with the Arduino IDE that is already installed (board ESP32 Dev Module, partition Huge APP). Plug the board in first; close the Serial Monitor. Then it shows the board's Wi-Fi messages. |
+| `MANUAL_TEST.bat` | **Hand test with live data**: real ESP32, sensors, arm and webcam, belt motor off. Move each box by hand past IR sensor 1, then IR sensor 2. Every box, and both sensors, show up live on the dashboard. The agent's learned table is not changed. |
+| `START_REAL_LINE.bat` | **The real belt**: ESP32 on USB + webcam. Cloud is the Render server (set up already), otherwise this PC. |
 | `MEASURE_SPEED_VS_ACCURACY.bat` | The experiment of this project: the same photos checked at ESP32, gateway and cloud. Writes `results/TRADEOFF.md` and the first table on the dashboard's Results page. |
-| `START_DEMO_ON_AWS.bat` | Pretend belt against the real AWS server. Asks for the server address and key once; the real line and the measurement use them from then on. |
+| `START_DEMO_ON_AWS.bat` | Pretend belt against the real cloud server (Render now; the name is from the AWS version). The address and key are already saved on this laptop; the real line and the measurement use them too. |
 | `TRAIN_ON_DOWNLOADED_PHOTOS.bat` | Public photo set (BoxCondition ZIP in Downloads): trains all three models, the agent, every result. |
 | `RETRAIN_ON_REAL_PHOTOS.bat` | The same with your own photos in `data/real`. Old models are kept. |
 | `RUN_PUBLIC_BENCHMARK.bat` | Second, public test (task graphs from Zenodo). |
@@ -30,7 +32,8 @@ Stop anything: press Enter in its black window.
 
 1. Wire the belt with `docs/hardware/SmartConveyor_Hardware_Setup_Guide.pdf` (29 numbered wires, build order,
    checks before power) and its circuit diagram. It was checked pin by pin against the ESP32 program.
-   Then flash the ESP32: `docs/ESP32_WIRING.md` (short pin table, flashing, 2-minute test in the Serial Monitor).
+   Then flash the ESP32: double-click `FLASH_ESP32.bat` (or by hand: `docs/ESP32_WIRING.md`, which also has the
+   2-minute test in the Serial Monitor and the Wi-Fi setup).
 2. Close the Arduino Serial Monitor. Double-click `CHECK_ESP32.bat`. Fix anything it reports.
 3. Mount the webcam above the belt, plug it into this laptop. Double-click `CHECK_CAMERA.bat`: pick the camera
    that shows the belt and set the crop square so that a box fills it. Run it again after moving the camera or the lamp.
@@ -39,8 +42,20 @@ Stop anything: press Enter in its black window.
 5. Stop it (Enter: the belt stops within two seconds and what the agent learned is saved), then double-click
    `MEASURE_SPEED_VS_ACCURACY.bat` for the real ESP32 timing.
 
-No belt yet? Flash the ESP32, then double-click `FIRST_HARDWARE_TEST.bat`: it does steps 2 to 5 in one window with
-only the ESP32, the two sensors and a camera (`docs/ESP32_WIRING.md`, section 4, describes the same test by hand).
+No belt yet? Flash the ESP32, then double-click `MANUAL_TEST.bat` and move boxes by hand: live on the dashboard.
+`FIRST_HARDWARE_TEST.bat` does steps 2 to 5 in one window with only the ESP32, the two sensors and a camera
+(`docs/ESP32_WIRING.md`, section 4, describes the same test by hand).
+
+## The ESP32's own Wi-Fi (firmware 4)
+
+The USB cable stays the fast path for the belt, the sensors, the arm and the tiny model. On top of that the board:
+1. joins the Wi-Fi written in `esp32_node/secrets.h` (this file stays on this PC; GitHub only has `secrets.example.h`);
+2. cannot join -> opens its own hotspot (name and password in `secrets.h`). Join it with a phone: the setup page opens
+   by itself, or go to **http://192.168.4.1**. Pick the Wi-Fi, type its password and the hotspot password, **Save**.
+   Back online, the hotspot closes. If the Wi-Fi drops for 20 s, the hotspot comes back;
+3. online: its own live page at `http://<HOSTNAME>.local` (or its address), and it sends its sensors, belt and arm to
+   the cloud dashboard by itself. The cloud address and key are copied to it over USB the first time the gateway runs.
+Only 2.4 GHz Wi-Fi works (iPhone hotspot: turn on "Maximise Compatibility").
 
 Settings you may need (file `config/system.yaml`):
 - `esp32.servo_rest_deg`, `esp32.servo_push_deg`: arm angles.
@@ -69,13 +84,20 @@ Pages:
 - **Results**: speed against accuracy at the three places, what a cloud second opinion is worth on real photos, then the simulated decision experiments: which gaps are real and which are within chance, and what happens when the photos get darker or blurred.
 - **How it works**: the whole idea in plain words (good before the viva).
 
-## AWS (the cloud node)
+## The cloud node: Render (set up)
+
+The server is live at https://smart-conveyor-cloud.onrender.com and redeploys itself from GitHub. This laptop already
+has its address and key (`cloud/.secrets/aws_server.json`). Free plan: it sleeps after 15 minutes without requests and
+needs about a minute to wake up; the launchers wait for it. Open the dashboard 2 minutes before a demo, and download
+the box log after a run (a restart wipes it). Details: `docs/CLOUD_RENDER.md`.
+
+## AWS (alternative cloud node, not in use)
 
 1. AWS website, region Mumbai, open CloudShell (the `>_` icon).
 2. Actions, Upload file: `dist/server_bundle.zip`.
 3. Paste: `unzip -o -q server_bundle.zip 'cloud/*' -d sc && bash sc/cloud/deploy_cloudshell.sh server_bundle.zip`
 4. It prints the server address and how to show the API key. Double-click `START_DEMO_ON_AWS.bat` and paste both.
-5. From now on `START_REAL_LINE.bat` and `MEASURE_SPEED_VS_ACCURACY.bat` use AWS as the cloud.
+5. Then `START_REAL_LINE.bat` and `MEASURE_SPEED_VS_ACCURACY.bat` use AWS instead of Render as the cloud.
 6. When finished, stop paying: `bash sc/cloud/deploy_cloudshell.sh --teardown`
 
 ## If something fails
@@ -85,6 +107,10 @@ Pages:
 - The real line shows the wrong picture (your face, not the belt): double-click `CHECK_CAMERA.bat` and type the other camera's number.
 - "Python is not installed": install Python 3.12 from python.org, tick "Add python.exe to PATH".
 - "No ESP32 answered": firmware not flashed, Serial Monitor still open, charge-only USB cable, or missing CP210x / CH340 driver.
+- The ESP32 does not join the Wi-Fi: 5 GHz-only network, wrong password in `secrets.h`, or out of range. Join its setup
+  hotspot and pick the network there. The board's messages start with `#` (Serial Monitor at 460800 baud, or `FLASH_ESP32.bat`).
+- The dashboard says the board's cloud link is not ok: "wrong API key" -> run the gateway once with the board on USB (it
+  copies the key); "no answer" -> the Render server is asleep or the Wi-Fi has no Internet.
 - Files from the older Raspberry Pi version are moved to `_old_2node_version/` automatically. Nothing is deleted.
 
 ## Honest limits

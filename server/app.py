@@ -10,14 +10,20 @@ Endpoints                                                     key needed?
   POST /infer            JPEG in -> {p_damaged, label, server_ms, heatmap}   (the big model)
   POST /api/events       finished boxes from the gateway (batched)
   POST /api/status       gateway status every second (network numbers, Q-table snapshot ...)
+  POST /api/edge         the ESP32's own readings over its Wi-Fi (firmware 4): sensors, belt, arm, Wi-Fi
   GET  /api/state        everything the dashboard shows
-  GET/POST /api/control  dashboard buttons: network scenario, server overload, gateway overload, belt, policy
+  GET/POST /api/control  dashboard buttons: network scenario, server overload, gateway overload, belt, policy,
+                         manual tests (belt on/off, push the arm, check a box now)
   POST /api/reset        start a new session (counters to zero; old data kept in the database)
   GET  /api/export.csv   box events as CSV  (?session=current|all|<n>)
   GET  /api/models       model manifest (sha256) for the gateway's sync tool
   GET  /api/models/<f>   download a model file
   POST /api/qtable       gateway uploads its online-learned Q-table (backup)
   GET  /api/qtable/latest
+
+Live updates (long polling): GET /api/state?after=<ver>&wait=<s> and GET /api/control?after=<cver>&wait=<s>
+answer as soon as something changes (a finished box, a gateway status, a button) instead of on a timer, so
+the dashboard and the gateway hear about it one network trip later. Without "after" they answer at once.
 
 Security: set the API key with the environment variable CONVEYOR_API_KEY (the EC2
 bootstrap does this). Every request except /, /ping, /health and /static must then
@@ -45,7 +51,8 @@ from .store import EventStore
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPEN_PATHS = {"/", "/ping", "/health", "/favicon.ico"}
-CONTROL_KEYS = ("scenario", "server_slow", "gw_stress", "belt_duty", "policy", "cloud_per_min")
+CONTROL_KEYS = ("scenario", "server_slow", "gw_stress", "belt_duty", "policy", "cloud_per_min",
+                "belt_on", "belt_n", "arm_test", "check_now")
 SCENARIOS = {"good", "busy", "bad", "bwcap", "lossy", "stalls", "down", "real"}
 POLICIES = {"qlearning", "confidence", "confidence_reserve", "ask_always",
             "adaptive", "deadline", "threshold", "always_gateway", "always_cloud", "always_edge"}
@@ -75,6 +82,14 @@ def _valid_control(upd: dict) -> dict:
             out["cloud_per_min"] = min(600.0, max(0.0, float(upd["cloud_per_min"])))
         except (TypeError, ValueError):
             pass
+    if "belt_on" in upd:                           # manual tests: belt motor on / off
+        out["belt_on"] = bool(upd["belt_on"])
+    for k in ("arm_test", "check_now", "belt_n"):  # manual tests: a new number = do it once more
+        if k in upd:
+            try:
+                out[k] = int(upd[k]) % 1000000000
+            except (TypeError, ValueError):
+                pass
     return out
 
 
@@ -93,7 +108,9 @@ def create_app(cfg: dict, model=None, data_dir: str | None = None, api_key: str 
         # scenario None = no network condition requested yet: the node keeps whatever it started with
         # (a mock node talking to a real remote server must stay on the real network)
         "control": {"scenario": None, "server_slow": False, "gw_stress": False, "belt_duty": None, "policy": None,
-                    "cloud_per_min": None},
+                    "cloud_per_min": None, "belt_on": None, "belt_n": 0, "arm_test": 0, "check_now": 0},
+        "ver": 0, "cver": 0,         # change counters for long polling (anything / control only)
+        "edge": None, "edge_t": 0.0,  # last readings the ESP32 sent by itself over Wi-Fi
         "status": {}, "status_t": 0.0, "q": None, "visits": None,
         "served": 0, "probes": 0, "server_ms_sum": 0.0, "last_cloud": None,
         "lock": threading.Lock(), "started": time.time(),
@@ -105,6 +122,37 @@ def create_app(cfg: dict, model=None, data_dir: str | None = None, api_key: str 
     def server_counters():
         with S["lock"]:
             return {"served": S["served"], "probes": S["probes"], "server_ms_sum": S["server_ms_sum"]}
+
+    # ------------------------------------------------------------------ live updates (long polling)
+    # A waiting request holds one server thread, so only a few may wait at once; the rest answer at once.
+    http_threads = int(os.environ.get("CONVEYOR_HTTP_THREADS") or cfg.get("server", {}).get("threads", 8))
+    lp_max = int(os.environ.get("CONVEYOR_LONGPOLL_MAX") or max(1, min(6, http_threads - 3)))
+    changed = threading.Condition()
+    lp_slots = threading.BoundedSemaphore(lp_max)
+
+    def bump(control: bool = False):
+        """Something new: wake every request that is waiting for a change."""
+        with changed:
+            S["ver"] += 1
+            if control:
+                S["cver"] += 1
+            changed.notify_all()
+
+    def wait_for_change(counter: str) -> bool:
+        """?after=<n>&wait=<s>: hold this request until S[counter] is no longer n (at most 25 s).
+        Returns True if it really waited (long polling on), False if it answers at once."""
+        after = request.args.get("after", type=int)
+        wait = request.args.get("wait", default=0.0, type=float)
+        if after is None or not wait or wait <= 0:
+            return False
+        if not lp_slots.acquire(blocking=False):
+            return False                               # all waiting slots busy: answer at once
+        try:
+            with changed:
+                changed.wait_for(lambda: S[counter] != after, timeout=min(float(wait), 25.0))
+            return True
+        finally:
+            lp_slots.release()
 
     line = os.environ.get("CONVEYOR_LINE") or str(cfg.get("project", {}).get("line", "line-1"))
     sync = CloudSync(store, registry, server_counters, line_name=line) if enable_cloud_sync else None
@@ -171,6 +219,7 @@ def create_app(cfg: dict, model=None, data_dir: str | None = None, api_key: str 
         if not isinstance(evs, list):
             return jsonify({"error": "send a JSON list of events"}), 400
         n = store.add_many(evs[:1000], device=request.headers.get("X-Device-Id", "pi-1")[:40])
+        bump()
         return jsonify({"ok": True, "n": n})
 
     @app.post("/api/status")
@@ -184,17 +233,49 @@ def create_app(cfg: dict, model=None, data_dir: str | None = None, api_key: str 
             if "qmaps" in st:                      # small pictures of the learned table (sent every few seconds)
                 S["qmaps"] = st.pop("qmaps")
             S["status"], S["status_t"] = st, time.time()
+        bump()
+        return jsonify({"ok": True})
+
+    EDGE_KEYS = {"fw": int, "ir_camera": int, "ir_arm": int, "duty": int, "belt_on": int, "count_camera": int,
+                 "count_arm": int, "pushes": int, "arm_out": int, "usb_link": int, "model": int, "uptime_ms": int,
+                 "free_heap": int, "min_heap": int, "wifi": str, "ip": str, "rssi": int, "hotspot": int,
+                 "hotspot_name": str, "cloud": str, "cloud_ms": int, "host": str, "ssid": str}
+
+    @app.post("/api/edge")
+    def edge():
+        """The ESP32 itself (over its Wi-Fi): sensors, belt, arm, memory, Wi-Fi. Known fields only, short strings."""
+        d = request.get_json(force=True, silent=True)
+        if not isinstance(d, dict):
+            return jsonify({"error": "send a JSON object"}), 400
+        out = {}
+        for k, typ in EDGE_KEYS.items():
+            if k in d:
+                try:
+                    out[k] = typ(d[k]) if typ is int else str(d[k])[:64]
+                except (TypeError, ValueError):
+                    pass
+        with S["lock"]:
+            S["edge"], S["edge_t"] = out, time.time()
+        bump()
         return jsonify({"ok": True})
 
     # ------------------------------------------------------------------ dashboard
     @app.route("/api/control", methods=["GET", "POST"])
     def control():
+        lp = False
         if request.method == "POST":
             upd = _valid_control(request.get_json(force=True, silent=True) or {})
             with S["lock"]:
                 S["control"].update(upd)
+            bump(control=True)
+        else:
+            lp = wait_for_change("cver")             # the gateway waits here for the next button press
         with S["lock"]:
-            return jsonify(dict(S["control"]))
+            out = dict(S["control"])
+        out["cver"] = S["cver"]
+        r = jsonify(out)
+        r.headers["X-Long-Poll"] = "1" if lp else "0"
+        return r
 
     @app.post("/api/reset")
     def reset():
@@ -202,10 +283,13 @@ def create_app(cfg: dict, model=None, data_dir: str | None = None, api_key: str 
         with S["lock"]:
             S["served"] = S["probes"] = 0
             S["server_ms_sum"] = 0.0
+        bump()
         return jsonify({"ok": True, "session": store.session})
 
     @app.get("/api/state")
     def state():
+        lp = wait_for_change("ver")                  # the dashboard waits here for the next box or status
+        ver = S["ver"]                               # read BEFORE the state: a change during the read is not lost
         all_s, last100 = store.summaries()          # running counters: O(1), not a re-scan
         tail = store.tail(300)
         recent = [dict(e) for e in tail[-14:]][::-1]
@@ -226,6 +310,8 @@ def create_app(cfg: dict, model=None, data_dir: str | None = None, api_key: str 
                            "where": os.environ.get("CONVEYOR_WHERE", "local"),
                            "aws": sync.status if sync else None},
                 "last_cloud": S["last_cloud"],
+                "edge_wifi": dict(S["edge"], age_s=round(time.time() - S["edge_t"], 1)) if S["edge"] else None,
+                "ver": ver, "lp": lp, "server_t": time.time(),
             }
         return jsonify(out)
 
@@ -320,7 +406,8 @@ def main():
         ext["sync"].start()
     try:
         from waitress import serve
-        serve(app, host=host, port=port, threads=int(cfg["server"]["threads"]), ident=None)
+        threads = int(os.environ.get("CONVEYOR_HTTP_THREADS") or cfg["server"]["threads"])
+        serve(app, host=host, port=port, threads=threads, ident=None)
     except ImportError:
         app.run(host=host, port=port, threaded=True)
 

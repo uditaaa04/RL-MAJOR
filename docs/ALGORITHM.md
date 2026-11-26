@@ -24,7 +24,7 @@ The three places:
 |---|---|---|---|
 | **EDGE** (0) | the gateway shrinks the photo to a tiny grey picture and sends it over the USB cable to the **ESP32**, which runs its **tiny model** (three or four small convolutions, about 6,000 to 12,000 numbers) | needs no Internet and no laptop CPU; time is almost constant | least accurate; slower than the gateway because of the cable |
 | **GATEWAY** (1) | the laptop checks the photo with its **small model** (MobileNetV3-Small, 128 px) | a few milliseconds, good accuracy | slow when the laptop is overloaded |
-| **CLOUD** (2) | the photo goes to the AWS server's **big model** (MobileNetV3-Large, 160 px) | most accurate | crosses the Internet; the answer can arrive **too late** |
+| **CLOUD** (2) | the photo goes to the cloud server's **big model** (MobileNetV3-Large, 160 px) | most accurate | crosses the Internet; the answer can arrive **too late** |
 
 The answer must arrive **before the box reaches the reject arm** (about 0.3 to 0.7 s, depending on belt speed).
 If it is late, the box passes **unchecked** ("missed"). With this project's costs a missed box is worse than a

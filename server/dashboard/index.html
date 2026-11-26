@@ -143,6 +143,16 @@
   select{background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:7px 10px;font-size:12.5px;flex:1;min-width:150px}
   .note{font-size:11.5px;color:var(--faint);margin-top:10px}
   .keybox{display:none;margin-top:10px;gap:8px} .keybox.open{display:flex}
+  /* ---------- the ESP32, live ---------- */
+  .esp{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}
+  .sens{display:flex;align-items:center;gap:10px;border:1px solid var(--rule);border-radius:8px;padding:10px 12px}
+  .sens b{display:block;font-size:13px;color:var(--ink)} .sens span{font-size:11.5px;color:var(--soft)}
+  .sens .num{margin-left:auto;font-size:22px;color:var(--ink)}
+  .dot{width:16px;height:16px;border-radius:50%;background:var(--wash);border:1px solid var(--rule);flex:none;transition:background .08s}
+  .dot.on{background:var(--cyan-fill);border-color:var(--cyan-fill);box-shadow:0 0 14px var(--cyan-fill)}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--rule2);font-size:12.5px;color:var(--soft)}
+  .kv b{color:var(--ink);font-weight:600;text-align:right} .kv b.alert{color:var(--red)} .kv a{color:var(--cyan)}
+  .btn:disabled{opacity:.4;cursor:default}
   .keybox input{flex:1;background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:7px 10px;font-size:12.5px;min-width:0}
 
   /* ---------- cloud eye ---------- */
@@ -244,6 +254,22 @@
   </div>
 
   <div class="colR">
+    <section id="espSec">
+      <h2>The ESP32 on the belt, live</h2>
+      <p class="lead" id="espLead">Straight from the board: through the gateway's USB cable, or over the board's own Wi-Fi.</p>
+      <div class="esp">
+        <div class="sens"><i class="dot" id="eIr1"></i><div><b>IR sensor 1</b><span>under the camera</span></div><div class="num" id="eIr1n">0</div></div>
+        <div class="sens"><i class="dot" id="eIr2"></i><div><b>IR sensor 2</b><span>at the reject arm</span></div><div class="num" id="eIr2n">0</div></div>
+      </div>
+      <div class="kv"><span>Belt motor</span><b id="eBelt">no data</b></div>
+      <div class="kv"><span>Reject arm pushes</span><b id="ePush">no data</b></div>
+      <div class="kv"><span>USB cable to the gateway</span><b id="eUsb">no data</b></div>
+      <div class="kv"><span>Board's own Wi-Fi</span><b id="eWifi">no data</b></div>
+      <div class="kv"><span>Board running for</span><b id="eUp">no data</b></div>
+      <div class="kv"><span>Gateway to this screen</span><b id="eLag">no data</b></div>
+      <div class="rowc"><button class="btn" id="btnBelt" disabled>Belt on</button><button class="btn" id="btnArm" disabled>Push the arm</button><button class="btn go" id="btnCheck" disabled>Check a box now</button></div>
+      <div class="note" id="eNote">The buttons need the gateway running (MANUAL_TEST, START_REAL_LINE or START_DEMO).</div>
+    </section>
     <section>
       <h2>Test the line</h2>
       <p class="lead">Break something while it runs and watch the agent react.</p>
@@ -405,6 +431,11 @@ $("belt").oninput=e=>$("beltV").textContent=(+e.target.value).toFixed(2);
 $("belt").onchange=e=>setCtl({belt_duty:+e.target.value});
 $("policy").onchange=e=>setCtl({policy:e.target.value});
 $("btnReset").onclick=()=>post("/api/reset").then(tick).catch(()=>{});
+/* manual tests: every press sends a new number, so the gateway does it exactly once */
+let beltOn=null;
+$("btnBelt").onclick=()=>setCtl({belt_on:!beltOn,belt_n:(ctl.belt_n||0)+1});
+$("btnArm").onclick=()=>setCtl({arm_test:(ctl.arm_test||0)+1});
+$("btnCheck").onclick=()=>setCtl({check_now:(ctl.check_now||0)+1});
 function renderCtl(){
   const sc=ctl.scenario||(S&&S.status&&S.status.scenario)||"";
   document.querySelectorAll("#scenBtns button").forEach(b=>b.classList.toggle("active",b.dataset.k===sc));
@@ -990,11 +1021,41 @@ $("btnDemo").onclick=()=>{
 };
 
 /* ------------------------------------------------------------------ poll */
-function tick(){
-  api("/api/state").then(r=>r.json()).then(s=>{
+let lagT=null;const LAGS=[];
+function upTxt(sec){sec=Math.round(sec);return sec>=3600?`${Math.floor(sec/3600)} h ${Math.floor(sec%3600/60)} min`:sec>=60?`${Math.floor(sec/60)} min ${sec%60} s`:`${sec} s`}
+function setKv(id,text,alert){const e=$(id);e.textContent=text;e.className=alert?"alert":""}
+function renderEsp(s,piOk){
+  const st=s.status||{},es=st.esp32||{},lv=piOk&&es.mode==="real"?es.live:null,wf=s.edge_wifi&&s.edge_wifi.age_s<8?s.edge_wifi:null;
+  const usbFresh=lv&&lv.reading_age_s!=null&&lv.reading_age_s<2;
+  let ir1=null,ir2=null,n1=null,n2=null,push=null,belt=null,up=null,src="";
+  if(usbFresh){ir1=lv.ir_camera;ir2=lv.ir_arm;n1=lv.counts.ir_camera;n2=lv.counts.ir_arm;push=lv.counts.pushes;belt=lv.belt_on&&lv.duty>0?lv.duty:0;up=lv.uptime_s;src="USB"}
+  else if(wf){ir1=!!wf.ir_camera;ir2=!!wf.ir_arm;n1=wf.count_camera;n2=wf.count_arm;push=wf.pushes;belt=wf.duty;up=wf.uptime_ms/1000;src="Wi-Fi"}
+  $("eIr1").className="dot"+(ir1?" on":"");$("eIr2").className="dot"+(ir2?" on":"");
+  $("eIr1n").textContent=n1==null?"–":n1;$("eIr2n").textContent=n2==null?"–":n2;
+  $("espLead").textContent=src?`Straight from the board, via ${src==="USB"?"the gateway's USB cable":"the board's own Wi-Fi"}. The counts are boxes seen ${src==="USB"?"since the gateway started":"since the board started"}.`:"No live readings yet: plug the ESP32 into the gateway laptop, or let it join the Wi-Fi.";
+  setKv("eBelt",belt==null?"no data":belt>0?`running, ${Math.round(belt/2.55)}%`:"stopped");
+  setKv("ePush",push==null?"no data":String(push));
+  setKv("eUsb",!piOk?"gateway not running":es.mode==="real"?(es.alive?`connected, ${(lv&&lv.firmware||"").replace("H SCQC-ESP32 ","firmware v").split(" ").slice(0,2).join(" ")}`:"not answering"):es.mode?"no board (pretend ESP32)":"no data",piOk&&es.mode==="real"&&!es.alive);
+  const w=wf||(lv&&lv.wifi?{wifi:lv.wifi.state,ip:lv.wifi.ip,rssi:lv.wifi.rssi,hotspot:lv.wifi.hotspot,ssid:lv.wifi.ssid,cloud:lv.wifi.cloud_ok?"ok":"not reaching the cloud"}:null);
+  const e=$("eWifi");
+  if(!w){e.textContent="no data (firmware 4 has Wi-Fi)";e.className=""}
+  else if(w.wifi==="ONLINE"){e.innerHTML="";e.append(`${w.ssid||"?"}, ${w.rssi} dBm, `);const a=document.createElement("a");a.href=`http://${w.ip}/`;a.target="_blank";a.rel="noopener";a.textContent=w.ip;e.append(a,`, cloud ${w.cloud}`);e.className=/^ok/.test(w.cloud||"")?"":"alert"}
+  else{e.textContent=`${String(w.wifi||"off").toLowerCase()}${w.hotspot?`, setup hotspot ${w.hotspot_name||""} on (192.168.4.1)`:""}`;e.className="alert"}
+  setKv("eUp",up==null?"no data":upTxt(up));
+  if(piOk&&st.t&&st.t!==lagT){lagT=st.t;const d=Date.now()/1000-st.t;if(d>=0&&d<5){LAGS.push(d);if(LAGS.length>9)LAGS.shift()}}
+  const ls=[...LAGS].sort((x,y)=>x-y);setKv("eLag",ls.length?`${Math.round(ls[ls.length>>1]*1000)} ms (same-PC clock)`:"no data");
+  beltOn=st.belt_running!=null?!!st.belt_running:(belt!=null?belt>0:null);
+  $("btnBelt").textContent=beltOn?"Belt off":"Belt on";
+  ["btnBelt","btnArm","btnCheck"].forEach(id=>$(id).disabled=!piOk);
+  $("eNote").textContent=!piOk?"The buttons need the gateway running (MANUAL_TEST, START_REAL_LINE or START_DEMO).":
+    st.manual?`Manual test: belt motor off. Hold a box under the camera so it passes IR sensor 1, then move it past IR sensor 2 within ${Math.round(st.transit_s||3)} s.`:
+    "Check a box now = take a photo and decide, as if IR sensor 1 had fired.";
+}
+function render(s){
     S=s;const a=s.all||{},h=s.last100||{},st=s.status||{};
     ctl=s.control||{};renderCtl();
     const piOk=s.status_age_s!=null&&s.status_age_s<5;
+    renderEsp(s,piOk);
     setStat("stPi","stPiV",piOk?(st.mock?"online, pretend belt":"online"):(s.status_age_s==null?"not started":"offline"),piOk?"on":(s.status_age_s==null?"":"alert"));
     const es=st.esp32||{};
     setStat("stEsp","stEspV",!piOk?"waiting":es.mode==="no model"?"no model yet":es.mode==="real"?(es.alive?`on USB, ${ms(st.edge_ms)}`:"not answering"):`pretend, ${ms(st.edge_ms)}`,
@@ -1027,11 +1088,25 @@ function tick(){
     if(view!=="live")return;
     drawDecisions(s.series||[]);drawNet(s.series||[]);renderFeed(s.recent||[]);
     drawQ(st,s.q,s.visits,s.recent&&s.recent.length?s.recent[0].state:null,s.qmaps);drawHeat(s.last_cloud);drawSpot(st);
-  }).catch(err=>{if(String(err&&err.message)==="401")return;
-    setStat("stSrv","stSrvV","not reachable","alert");setStat("stPi","stPiV","unknown","")});
+}
+function fail(err){if(String(err&&err.message)==="401")return;
+  setStat("stSrv","stSrvV","not reachable","alert");setStat("stPi","stPiV","unknown","")}
+function tick(){return api("/api/state").then(r=>r.json()).then(render).catch(fail)}
+/* live: the server answers as soon as something changes (a box, a status, a sensor), so there is no timer delay.
+   An older server without long polling is simply asked every 0.8 s. */
+const nap=ms=>new Promise(r=>setTimeout(r,ms));
+let VER=null;
+async function live(){
+  for(;;){
+    try{const q=VER==null?"":`?after=${VER}&wait=20`;
+      const s=await api("/api/state"+q).then(r=>r.json());
+      VER=s.ver==null?null:s.ver;render(s);
+      if(s.ver==null||(q&&!s.lp))await nap(800);
+    }catch(err){fail(err);await nap(1500)}
+  }
 }
 setTheme(document.documentElement.dataset.theme==="light"?"light":"dark",false);
-setInterval(tick,800);tick();requestAnimationFrame(loop);
+live();requestAnimationFrame(loop);
 if(location.hash.length>1)show(location.hash.slice(1));
 window.addEventListener("resize",()=>{if(view!=="live")return;const c=$("cLine");delete c.dataset.h;c.style.height="";tick()});
 </script>

@@ -6,12 +6,22 @@
     2. Runs the TINY edge model: the gateway laptop sends a very small grey photo,
        the ESP32 answers "chance this box is damaged" a few milliseconds later.
     3. Safety: if the gateway laptop goes silent for 3 seconds, the belt stops.
+    4. Wi-Fi (version 4, on the board's second processor core, so it can never slow down 1-3):
+       - joins the Wi-Fi saved in its memory (the first time: DEFAULT_WIFI_SSID below);
+       - cannot join -> opens its own hotspot "SmartConveyor-XXXX" (password AP_PASS below). Join it with a
+         phone or laptop: the setup page opens by itself (or go to http://192.168.4.1). Pick the Wi-Fi, type
+         its password, Save. Back online, the hotspot closes. If the Wi-Fi drops for 20 s, the hotspot returns;
+       - online: its own live page at http://smartconveyor.local (or its IP address), and it sends its sensors,
+         belt and arm straight to the cloud dashboard (https, checked with the root certificates below).
+         The cloud address and API key come over the USB cable from the gateway (commands U and Y).
 
-  How it talks: USB cable to the gateway laptop (serial, 460800 baud).
-  No Wi-Fi name or password is needed. No extra Arduino libraries are needed.
+  How it talks: USB cable to the gateway laptop (serial, 460800 baud) for everything that is time-critical.
+  No extra Arduino libraries are needed (WiFi, WebServer, DNSServer, Preferences, HTTPClient come with the board).
 
   Flash it
-    Arduino IDE 2  ->  Tools > Board > "ESP32 Dev Module"  ->  pick the COM port  ->  Upload.
+    Arduino IDE 2  ->  Tools > Board > "ESP32 Dev Module"
+                   ->  Tools > Partition Scheme > "Huge APP (3MB No OTA/1MB SPIFFS)"   (Wi-Fi + https need room)
+                   ->  pick the COM port  ->  Upload.
     Close the Serial Monitor before starting the gateway program (only one program can use the port).
 
   Text commands (one per line; you can type them in the Serial Monitor at 460800 baud to test)
@@ -24,15 +34,33 @@
                      debounce_ms
     W <bytes> <sum>  + raw bytes: load the tiny model           -> W OK <layers> <input size>
     I <id> <bytes> <sum> + raw bytes: one grey photo            -> R <id> <chance x10000> <compute us> <receive ms>
+    N                Wi-Fi status   -> N <OFF|CONNECTING|ONLINE|LOST> <ip|-> <rssi> <hotspot 0/1> <cloud> <wifi name|->
+    V <name><TAB><password>   join this Wi-Fi (saved in the board's memory)              -> OK
+    X                forget the saved Wi-Fi (the hotspot opens)                          -> OK
+    U <url>          cloud server address, e.g. https://name.onrender.com ("U -" = none) -> OK
+    Y <key>          cloud API key ("Y -" = none)                                        -> OK
   Events the board sends by itself
     BOOT SCQC-ESP32 <version>     after power-up / reset
     E C <ms>                      IR sensor 1: a box is under the camera
     E A <ms>                      IR sensor 2: a box is at the reject arm
+    # <text>                      Wi-Fi news for people reading the Serial Monitor (the gateway ignores it)
 */
 #ifdef HOST_TEST
 #include "host_stub.h"            // lets the same file be compiled and tested on a PC
+#define WIFI_ON 0
 #else
 #include <Arduino.h>
+#define WIFI_ON 1                 // 0 = build without Wi-Fi (USB only, like version 3)
+#endif
+#if WIFI_ON
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <Preferences.h>
+#include <ESPmDNS.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <time.h>
 #endif
 #include <math.h>
 #include <stdlib.h>
@@ -50,11 +78,45 @@
 // (There are no good / damaged lamps: the dashboard shows every verdict. GPIO 16 and 17 are free.)
 
 #define BAUD            460800
-#define FW_VERSION      3       // 2: the two verdict LEDs (GPIO 16, 17) and the L command were removed
+#define FW_VERSION      4       // 2: the two verdict LEDs (GPIO 16, 17) and the L command were removed
                                 // 3: a refused model or photo is read off the cable and thrown away (its bytes
                                 //    can no longer be mistaken for commands); a new model replaces the old one
                                 //    even when memory is short
+                                // 4: Wi-Fi: saved network or setup hotspot, live page, data straight to the cloud
 #define LINK_TIMEOUT_MS 3000    // no message from the gateway for this long -> stop the belt
+
+// ---------------- Wi-Fi names and passwords ----------------
+// Put yours in esp32_node/secrets.h (copy secrets.example.h). That file is never uploaded to GitHub.
+#if !defined(HOST_TEST) && defined(__has_include)
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#endif
+#ifndef DEFAULT_WIFI_SSID
+#define DEFAULT_WIFI_SSID ""              // main Wi-Fi, tried first (until another one is saved from the setup page)
+#endif
+#ifndef DEFAULT_WIFI_PASS
+#define DEFAULT_WIFI_PASS ""
+#endif
+#ifndef BACKUP_WIFI_SSID
+#define BACKUP_WIFI_SSID ""               // backup Wi-Fi (e.g. a phone hotspot), tried second
+#endif
+#ifndef BACKUP_WIFI_PASS
+#define BACKUP_WIFI_PASS ""
+#endif
+#ifndef AP_NAME
+#define AP_NAME "SmartConveyor-Setup"     // the board's own setup hotspot
+#endif
+#ifndef AP_PASS
+#define AP_PASS "conveyor123"             // its password, also asked for by the Save button (8+ characters)
+#endif
+#ifndef AP_IP
+#define AP_IP 192, 168, 4, 1              // the setup page address: http://192.168.4.1
+#endif
+#ifndef HOSTNAME
+#define HOSTNAME "smartconveyor"          // the live page: http://smartconveyor.local
+#endif
+#define HEARTBEAT_MS 2000                 // readings to the cloud this often, and at once when something changes
 
 // ---------------- settings the gateway can change (command C) ----------------
 static int  g_servo_rest = 0;       // degrees
@@ -129,6 +191,10 @@ static void motorApply(int duty) {
   pwmWrite(PIN_MOTOR_ENA, CH_MOTOR, (uint32_t)duty);
 }
 
+// ---------------- what the Wi-Fi side reads (written only by the belt code; 32-bit values, read whole) --------
+static volatile uint32_t g_count_cam = 0, g_count_arm = 0, g_pushes = 0;
+static volatile bool g_net_kick = false;   // something changed: send the readings to the cloud now
+
 // ---------------- reject arm (non-blocking) ----------------
 static bool g_arm_out = false;
 static uint32_t g_arm_back_at = 0;
@@ -137,6 +203,8 @@ static void armPush(uint32_t hold_ms) {
   servoWrite(g_servo_push);
   g_arm_out = true;
   g_arm_back_at = millis() + hold_ms;      // a second push while it is out simply keeps it out longer
+  g_pushes = g_pushes + 1;
+  g_net_kick = true;
 }
 
 static void armService() {
@@ -168,12 +236,14 @@ static void pollIR() {
         Serial.print(s.tag);
         Serial.print(' ');
         Serial.println(now);
+        if (i == 0) g_count_cam = g_count_cam + 1; else g_count_arm = g_count_arm + 1;
+        g_net_kick = true;
       }
     } else if (sees) {
       s.clear_since = 0;
     } else {
       if (s.clear_since == 0) s.clear_since = now ? now : 1;
-      else if (now - s.clear_since >= g_debounce_ms) s.busy = false;   // really gone
+      else if (now - s.clear_since >= g_debounce_ms) { s.busy = false; g_net_kick = true; }   // really gone
     }
   }
   armService();
@@ -386,6 +456,570 @@ static void cmdInfer(long id, long n, long want_sum) {
   Serial.println(rx_ms);
 }
 
+// =====================================================================================================
+// Wi-Fi (version 4). Runs as its own task on processor core 0; the belt code above runs in loop() on core 1.
+// The belt code only WRITES the readings below and the "please change" requests; this task only READS the
+// readings and owns everything Wi-Fi (radio, web pages, saved settings, the cloud connection).
+// Nothing here prints to the USB cable directly: news goes through g_netmsg and loop() prints it, so a
+// Wi-Fi line can never land in the middle of a belt message.
+// =====================================================================================================
+struct NetRequest {                       // USB commands V / X / U / Y, handed to the Wi-Fi task
+  bool wifi, forget, url, key;
+  char ssid[33], pass[65], url_v[128], key_v[80];
+};
+struct NetStatus {                        // what N and the pages report
+  char state[12], ip[16], ssid[33], cloud[40];
+  int rssi;
+  bool hotspot;
+};
+static NetRequest g_req;
+static NetStatus g_net = { "OFF", "-", "-", "not set", 0, false };
+static char g_netmsg[120];
+static volatile bool g_netmsg_ready = false;
+
+#if WIFI_ON
+static portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
+#define NET_LOCK() portENTER_CRITICAL(&g_mux)
+#define NET_UNLOCK() portEXIT_CRITICAL(&g_mux)
+#else
+#define NET_LOCK()
+#define NET_UNLOCK()
+#endif
+
+static void copyStr(char *dst, size_t n, const char *src) {
+  size_t i = 0;
+  for (; src && src[i] && i + 1 < n; i++) dst[i] = src[i];
+  dst[i] = 0;
+}
+
+#if WIFI_ON
+// printed by loop() (core 1) as "# <text>"
+static void netSay(const char *text) {
+  if (g_netmsg_ready) return;             // the last one is not printed yet: drop this one
+  copyStr(g_netmsg, sizeof g_netmsg, text);
+  g_netmsg_ready = true;
+}
+
+enum NetState { NET_OFF, NET_CONNECTING, NET_ONLINE, NET_LOST };
+static const char *NET_NAMES[] = { "OFF", "CONNECTING", "ONLINE", "LOST" };
+
+static WebServer g_web(80);
+static DNSServer g_dns;
+static Preferences g_prefs;
+static WiFiClientSecure *g_tls = NULL;
+static HTTPClient g_http;
+static bool g_http_ready = false;        // begin() done and headers added: the next POSTs reuse the connection
+static String g_cloud_note = "";
+
+static void cloudReset() {               // new address / key / certificate setting, or repeated failures
+  if (g_http_ready) g_http.end();
+  g_http_ready = false;
+  if (g_tls) { delete g_tls; g_tls = NULL; }
+}
+
+static NetState g_state = NET_OFF;
+static uint32_t g_state_t = 0, g_online_t = 0, g_try_t = 0, g_hb_last = 0, g_hb_wait_until = 0;
+static bool g_ap = false, g_web_on = false, g_mdns = false, g_insecure = false;
+static int g_try_idx = 0;                 // 0 = saved / main Wi-Fi, 1 = backup Wi-Fi
+static int g_hb_fail = 0;
+static uint32_t g_hb_ms = 0;              // time of the last cloud request
+static String g_ssid, g_pass, g_url, g_key, g_scan_json = "[]";
+static bool g_scanning = false;
+static char g_apname[33];
+
+#include "root_ca.h"
+
+static uint32_t g_pub_t = 0;
+static void publish() {
+  if (millis() - g_pub_t < 250) return;   // 4 times a second is plenty (and spares the memory)
+  g_pub_t = millis();
+  NET_LOCK();
+  copyStr(g_net.state, sizeof g_net.state, NET_NAMES[g_state]);
+  g_net.hotspot = g_ap;
+  if (g_state == NET_ONLINE) {
+    copyStr(g_net.ip, sizeof g_net.ip, WiFi.localIP().toString().c_str());
+    g_net.rssi = WiFi.RSSI();
+  } else {
+    copyStr(g_net.ip, sizeof g_net.ip, "-");
+    g_net.rssi = 0;
+  }
+  NET_UNLOCK();
+}
+
+static void setCloudNote(const char *t) {
+  if (g_cloud_note == t) return;
+  g_cloud_note = t;
+  NET_LOCK();
+  copyStr(g_net.cloud, sizeof g_net.cloud, t);
+  NET_UNLOCK();
+}
+
+static void hotspotOn() {
+  if (g_ap) return;
+  WiFi.mode(WIFI_AP_STA);
+  if (!WiFi.softAP(g_apname, AP_PASS)) {
+    netSay("hotspot could not start (is AP_PASS 8 or more characters?)");
+    return;
+  }
+  IPAddress want(AP_IP);
+  if (!(WiFi.softAPIP() == want)) {
+    WiFi.softAPConfig(want, want, IPAddress(255, 255, 255, 0));
+  }
+  g_dns.start(53, "*", WiFi.softAPIP());  // every name -> this board: phones open the setup page by themselves
+  g_ap = true;
+  char t[96];
+  snprintf(t, sizeof t, "hotspot %s on, setup page http://%s", g_apname, WiFi.softAPIP().toString().c_str());
+  netSay(t);
+}
+
+static void hotspotOff() {
+  if (!g_ap) return;
+  g_dns.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  g_ap = false;
+  netSay("hotspot off");
+}
+
+// which network to try now: saved / main first, then the backup
+static bool pickNetwork(String &ssid, String &pass) {
+  if (g_try_idx == 0 && g_ssid.length()) { ssid = g_ssid; pass = g_pass; return true; }
+  if (g_try_idx == 1 && strlen(BACKUP_WIFI_SSID)) { ssid = BACKUP_WIFI_SSID; pass = BACKUP_WIFI_PASS; return true; }
+  return false;
+}
+
+static void startConnect() {
+  String ssid, pass;
+  if (!pickNetwork(ssid, pass)) {
+    g_try_idx = 0;
+    if (!pickNetwork(ssid, pass)) {       // nothing saved at all: only the hotspot
+      g_state = NET_OFF;
+      hotspotOn();
+      return;
+    }
+  }
+  WiFi.disconnect(false, false);
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  g_state = NET_CONNECTING;
+  g_state_t = g_try_t = millis();
+  NET_LOCK();
+  copyStr(g_net.ssid, sizeof g_net.ssid, ssid.c_str());
+  NET_UNLOCK();
+  char t[80];
+  snprintf(t, sizeof t, "joining Wi-Fi %s", ssid.c_str());
+  netSay(t);
+}
+
+static void goOnline() {
+  g_state = NET_ONLINE;
+  g_online_t = millis();
+  g_try_idx = 0;
+  if (g_mdns) MDNS.end();
+  g_mdns = MDNS.begin(HOSTNAME);
+  if (g_mdns) MDNS.addService("http", "tcp", 80);
+  configTime(0, 0, "pool.ntp.org", "time.google.com");    // a correct clock for checking certificates
+  char t[96];
+  snprintf(t, sizeof t, "online: http://%s  (http://%s.local)", WiFi.localIP().toString().c_str(), HOSTNAME);
+  netSay(t);
+}
+
+// one step of the Wi-Fi plan, called about every 10 ms
+static void netStep() {
+  uint32_t now = millis();
+  bool up = WiFi.status() == WL_CONNECTED;
+  bool someone_on_hotspot = g_ap && WiFi.softAPgetStationNum() > 0;
+  switch (g_state) {
+    case NET_OFF:
+      if (!g_ap) hotspotOn();
+      break;
+    case NET_CONNECTING:
+      if (up) { goOnline(); break; }
+      if (now - g_state_t > 15000) {               // 15 s without success
+        if (g_try_idx == 0 && strlen(BACKUP_WIFI_SSID)) { g_try_idx = 1; startConnect(); break; }
+        if (!g_ap) hotspotOn();
+        g_state = NET_LOST;
+        g_state_t = now;
+      }
+      break;
+    case NET_ONLINE:
+      if (!up) { g_state = NET_LOST; g_state_t = now; netSay("Wi-Fi lost, trying again"); break; }
+      // back online: close the hotspot (later if a phone is still on it, so it can read the new address)
+      if (g_ap && (now - g_online_t > 120000 || (now - g_online_t > 20000 && !someone_on_hotspot))) hotspotOff();
+      break;
+    case NET_LOST:
+      if (up) { goOnline(); break; }
+      if (now - g_state_t > 20000 && !g_ap) hotspotOn();
+      // try again every 30 s, but not while someone is on the setup page (trying moves the radio channel)
+      if (now - g_try_t > 30000 && !someone_on_hotspot) {
+        g_try_idx = (g_try_idx == 0 && strlen(BACKUP_WIFI_SSID)) ? 1 : 0;
+        startConnect();
+      }
+      break;
+  }
+  if (g_scanning) {
+    int n = WiFi.scanComplete();
+    if (n >= 0) {
+      String j = "[";
+      for (int i = 0; i < n && i < 20; i++) {
+        String name = WiFi.SSID(i);
+        if (!name.length()) continue;
+        String e;
+        for (size_t k = 0; k < name.length(); k++) {
+          char c = name[k];
+          if (c == '"' || c == '\\') e += '\\';
+          if ((unsigned char)c >= 32) e += c;
+        }
+        if (j.length() > 1) j += ",";
+        j += "{\"ssid\":\"" + e + "\",\"rssi\":" + String(WiFi.RSSI(i)) +
+             ",\"open\":" + (WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "true" : "false") + "}";
+      }
+      j += "]";
+      g_scan_json = j;
+      WiFi.scanDelete();
+      g_scanning = false;
+    } else if (n == WIFI_SCAN_FAILED) {
+      g_scanning = false;
+    }
+  }
+  publish();
+}
+
+static void saveWifi(const String &ssid, const String &pass) {
+  g_ssid = ssid;
+  g_pass = pass;
+  g_prefs.putString("ssid", ssid);
+  g_prefs.putString("pass", pass);
+  g_try_idx = 0;
+  startConnect();
+}
+
+static void forgetWifi() {
+  g_prefs.remove("ssid");
+  g_prefs.remove("pass");
+  g_ssid = DEFAULT_WIFI_SSID;              // back to the defaults compiled in
+  g_pass = DEFAULT_WIFI_PASS;
+  WiFi.disconnect(false, false);
+  g_state = NET_LOST;
+  g_state_t = millis() - 20000;            // open the hotspot now
+  netSay("saved Wi-Fi forgotten");
+}
+
+// ---------------- the board's readings as JSON (pages and cloud) ----------------
+static String jsonEsc(const char *s) {
+  String e;
+  for (; *s; s++) {
+    if (*s == '"' || *s == '\\') e += '\\';
+    if ((unsigned char)*s >= 32) e += *s;
+  }
+  return e;
+}
+
+static String liveJson() {
+  NetStatus n;
+  NET_LOCK();
+  n = g_net;
+  NET_UNLOCK();
+  char b[900];
+  snprintf(b, sizeof b,
+           "{\"fw\":%d,\"ir_camera\":%d,\"ir_arm\":%d,\"duty\":%d,\"belt_on\":%d,\"count_camera\":%lu,"
+           "\"count_arm\":%lu,\"pushes\":%lu,\"arm_out\":%d,\"usb_link\":%d,\"model\":%d,\"uptime_ms\":%lu,"
+           "\"free_heap\":%lu,\"min_heap\":%lu,\"wifi\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"hotspot\":%d,"
+           "\"hotspot_name\":\"%s\",\"cloud\":\"%s\",\"cloud_ms\":%lu,\"host\":\"%s\",\"ssid\":\"%s\",\"cloud_url\":\"%s\"}",
+           FW_VERSION, g_ir[0].busy ? 1 : 0, g_ir[1].busy ? 1 : 0, g_duty, g_duty > 0 ? 1 : 0,
+           (unsigned long)g_count_cam, (unsigned long)g_count_arm, (unsigned long)g_pushes, g_arm_out ? 1 : 0,
+           g_link_ok ? 1 : 0, g_model_ok ? 1 : 0, (unsigned long)millis(), (unsigned long)ESP.getFreeHeap(),
+           (unsigned long)ESP.getMinFreeHeap(), n.state, n.ip, n.rssi, n.hotspot ? 1 : 0,
+           jsonEsc(g_apname).c_str(), jsonEsc(n.cloud).c_str(), (unsigned long)g_hb_ms, HOSTNAME,
+           jsonEsc(n.ssid).c_str(), jsonEsc(g_url.c_str()).c_str());
+  return String(b);
+}
+
+// ---------------- readings to the cloud dashboard (https, keep-alive) ----------------
+static void heartbeat() {
+  if (g_state != NET_ONLINE) return;
+  if (!g_url.length() || !g_key.length()) { setCloudNote("not set (plug into the gateway once)"); return; }
+  uint32_t now = millis();
+  bool due = now - g_hb_last >= HEARTBEAT_MS || (g_net_kick && now - g_hb_last >= 250);
+  if (!due || (int32_t)(now - g_hb_wait_until) < 0) return;
+  g_net_kick = false;
+  g_hb_last = now;
+  if (!g_http_ready) {                    // one https connection, kept open: no new handshake every time
+    if (g_tls == NULL) {
+      g_tls = new WiFiClientSecure();
+      if (g_insecure) g_tls->setInsecure();
+      else g_tls->setCACert(ROOT_CA);
+    }
+    g_http.setReuse(true);
+    g_http.setConnectTimeout(6000);
+    g_http.setTimeout(6000);
+    if (!g_http.begin(*g_tls, g_url + "/api/edge")) { setCloudNote("bad cloud address"); return; }
+    g_http.addHeader("Content-Type", "application/json");
+    g_http.addHeader("X-API-Key", g_key);
+    g_http.addHeader("X-Device-Id", "esp32-1");
+    g_http_ready = true;
+  }
+  uint32_t t0 = millis();
+  int code = g_http.POST(liveJson());
+  if (code > 0) g_http.getString();       // read the whole answer, so the connection can carry the next one
+  g_hb_ms = millis() - t0;
+  char t[40];
+  if (code == 200) {
+    g_hb_fail = 0;
+    snprintf(t, sizeof t, "ok, %lu ms", (unsigned long)g_hb_ms);
+  } else {
+    g_hb_fail++;
+    if (code == 401) snprintf(t, sizeof t, "wrong API key");
+    else if (code < 0) snprintf(t, sizeof t, "no answer (%d)", code);
+    else snprintf(t, sizeof t, "error %d", code);
+    uint32_t back = 2000UL * (uint32_t)(g_hb_fail < 15 ? g_hb_fail : 15);   // wait longer after each failure
+    g_hb_wait_until = now + back;
+    g_http.end();                         // start a fresh connection next time
+    g_http_ready = false;
+    if (g_hb_fail >= 3) cloudReset();     // ... and a fresh https client after repeated failures
+  }
+  setCloudNote(t);
+}
+
+// ---------------- web pages ----------------
+static const char PAGE_HEAD[] = R"HTML(<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart Conveyor QC - ESP32</title><style>
+:root{--bg:#000;--fg:#fff;--soft:rgba(255,255,255,.6);--rule:rgba(255,255,255,.16);--cy:#00e0ff;--red:#ff3b30}
+:root.light{--bg:#fff;--fg:#000;--soft:rgba(0,0,0,.6);--rule:rgba(0,0,0,.2);--cy:#007f99;--red:#d6261b}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:18px}h1{font-size:22px;margin:0 0 4px}p{color:var(--soft);margin:4px 0 14px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--rule)}
+.row b{font-weight:600}.led{display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--rule);margin-right:8px}
+.led.on{background:var(--cy);box-shadow:0 0 10px var(--cy)}.bad{color:var(--red)}a{color:var(--cy)}
+input,select,button{font:inherit;width:100%;box-sizing:border-box;padding:10px;margin:6px 0;border:1px solid var(--rule);
+border-radius:6px;background:var(--bg);color:var(--fg)}button{background:var(--cy);color:#000;border:0;font-weight:600;cursor:pointer}
+button.plain{background:none;color:var(--fg);border:1px solid var(--rule)}label{display:block;margin-top:10px;color:var(--soft)}
+.top{display:flex;justify-content:space-between;align-items:center}.top button{width:auto;padding:6px 10px}
+</style></head><body><main><div class="top"><h1>Smart Conveyor QC</h1><button class="plain" id="th">Light</button></div>
+<script>var L=localStorage.getItem("t")==="l";function T(){document.documentElement.className=L?"light":"";
+document.getElementById("th").textContent=L?"Dark":"Light"}T();document.getElementById("th").onclick=function(){L=!L;
+localStorage.setItem("t",L?"l":"d");T()};</script>)HTML";
+
+static const char PAGE_LIVE[] = R"HTML(<p>ESP32 edge node, live (3 times a second).</p>
+<div class="row"><span><i class="led" id="c"></i>IR sensor 1 (camera)</span><b id="cn">-</b></div>
+<div class="row"><span><i class="led" id="a"></i>IR sensor 2 (reject arm)</span><b id="an">-</b></div>
+<div class="row"><span>Belt motor</span><b id="belt">-</b></div><div class="row"><span>Reject arm pushes</span><b id="pu">-</b></div>
+<div class="row"><span>Gateway laptop (USB)</span><b id="usb">-</b></div><div class="row"><span>Tiny model loaded</span><b id="mo">-</b></div>
+<div class="row"><span>Wi-Fi</span><b id="wf">-</b></div><div class="row"><span>Cloud dashboard</span><b id="cl">-</b></div>
+<div class="row"><span>Running for</span><b id="up">-</b></div><div class="row"><span>Free memory</span><b id="me">-</b></div>
+<p style="margin-top:16px"><a id="dash" href="#" hidden>Open the cloud dashboard</a> &nbsp; <a href="/wifi">Wi-Fi settings</a></p>
+<script>function $(i){return document.getElementById(i)}function g(){fetch("/api/live").then(function(r){return r.json()}).then(function(d){
+$("c").className="led"+(d.ir_camera?" on":"");$("a").className="led"+(d.ir_arm?" on":"");$("cn").textContent=d.count_camera+" boxes";
+$("an").textContent=d.count_arm+" boxes";$("belt").textContent=d.duty>0?"running, "+Math.round(d.duty/2.55)+"%":"stopped";
+$("pu").textContent=d.pushes;$("usb").textContent=d.usb_link?"connected":"not connected";$("mo").textContent=d.model?"yes":"no";
+$("wf").textContent=d.wifi==="ONLINE"?d.ssid+", "+d.ip+" ("+d.rssi+" dBm)":d.wifi.toLowerCase()+(d.hotspot?", hotspot "+d.hotspot_name+" on":"");
+$("cl").textContent=d.cloud;$("cl").className=/^ok/.test(d.cloud)?"":"bad";var s=Math.floor(d.uptime_ms/1000);
+$("up").textContent=Math.floor(s/3600)+" h "+Math.floor(s%3600/60)+" min "+s%60+" s";$("me").textContent=Math.round(d.free_heap/1024)+" kB";
+if(d.cloud_url){$("dash").href=d.cloud_url;$("dash").hidden=false}}).catch(function(){})}g();setInterval(g,330);</script>
+</main></body></html>)HTML";
+
+static const char PAGE_WIFI[] = R"HTML(<p>Wi-Fi for the ESP32 (2.4 GHz networks only). The board joins it and sends its readings to the cloud dashboard.</p>
+<div class="row"><span>Now</span><b id="now">-</b></div>
+<form method="POST" action="/save"><label>Wi-Fi name</label><select id="list"><option value="">Searching for networks ...</option></select>
+<input name="ssid" id="ssid" placeholder="or type the name" required maxlength="32">
+<label>Wi-Fi password</label><input name="pass" type="password" maxlength="63" placeholder="empty for an open network">
+<label>Setup password (the hotspot password)</label><input name="pin" type="password" required>
+<details><summary style="margin-top:12px;color:var(--soft)">Cloud server (normally set by the gateway over USB)</summary>
+<label>Cloud address</label><input name="url" placeholder="https://name.onrender.com" maxlength="127">
+<label>Cloud API key</label><input name="key" type="password" placeholder="leave empty to keep the current one" maxlength="79">
+<label><input type="checkbox" name="insecure" value="1" style="width:auto"> skip the certificate check (testbed only)</label></details>
+<button>Save and connect</button></form>
+<form method="POST" action="/forget"><input name="pin" type="password" placeholder="setup password" required>
+<button class="plain">Forget the saved Wi-Fi</button></form><p><a href="/">Live readings</a></p>
+<script>function $(i){return document.getElementById(i)}$("list").onchange=function(){if(this.value)$("ssid").value=this.value};
+function sc(){fetch("/api/scan").then(function(r){return r.json()}).then(function(d){if(!d.networks){setTimeout(sc,1500);return}
+var l=$("list");l.innerHTML='<option value="">Pick a network ('+d.networks.length+' found)</option>';d.networks.forEach(function(n){
+var o=document.createElement("option");o.value=n.ssid;o.textContent=n.ssid+"  ("+n.rssi+" dBm"+(n.open?", open":"")+")";l.appendChild(o)})})}sc();
+function st(){fetch("/api/live").then(function(r){return r.json()}).then(function(d){$("now").textContent=d.wifi==="ONLINE"?
+"online: "+d.ssid+", http://"+d.ip+" or http://"+d.host+".local":d.wifi.toLowerCase()+(d.ssid&&d.ssid!=="-"?" ("+d.ssid+")":"")})}st();setInterval(st,1500);</script>
+</main></body></html>)HTML";
+
+static void sendPage(const char *body) {
+  String html = PAGE_HEAD;
+  html += body;
+  g_web.sendHeader("Cache-Control", "no-store");
+  g_web.send(200, "text/html; charset=utf-8", html);
+}
+
+static bool pinOk() {
+  return g_web.arg("pin") == AP_PASS;
+}
+
+static void onSave() {
+  if (!pinOk()) { sendPage("<p class=\"bad\">Wrong setup password. Nothing was changed.</p><p><a href=\"/wifi\">Back</a></p></main></body></html>"); return; }
+  String ssid = g_web.arg("ssid"), pass = g_web.arg("pass"), url = g_web.arg("url"), key = g_web.arg("key");
+  ssid.trim();
+  url.trim();
+  key.trim();
+  if (!ssid.length() || ssid.length() > 32 || pass.length() > 63 || (pass.length() > 0 && pass.length() < 8)) {
+    sendPage("<p class=\"bad\">The Wi-Fi name is empty or too long, or the password is shorter than 8 characters.</p><p><a href=\"/wifi\">Back</a></p></main></body></html>");
+    return;
+  }
+  if (url.length()) {
+    while (url.endsWith("/")) url.remove(url.length() - 1);
+    if (url.startsWith("http://") || url.startsWith("https://")) { g_url = url; g_prefs.putString("url", url); cloudReset(); }
+  }
+  if (key.length()) { g_key = key; g_prefs.putString("key", key); cloudReset(); }
+  bool ins = g_web.hasArg("insecure");
+  if (ins != g_insecure) {
+    g_insecure = ins;
+    g_prefs.putBool("insecure", ins);
+    cloudReset();
+  }
+  sendPage("<p>Saved. The board is joining the Wi-Fi now (up to 15 s).</p>"
+           "<div class=\"row\"><span>Now</span><b id=\"now\">joining ...</b></div>"
+           "<p>When it says <b>online</b>, the hotspot closes by itself and the board is reachable at the address shown. "
+           "Your phone goes back to its usual Wi-Fi.</p><p><a href=\"/wifi\">Back</a></p>"
+           "<script>function st(){fetch('/api/live').then(function(r){return r.json()}).then(function(d){"
+           "document.getElementById('now').textContent=d.wifi==='ONLINE'?'online: http://'+d.ip+'  or  http://'+d.host+'.local'"
+           ":d.wifi.toLowerCase()})}setInterval(st,1000);</script></main></body></html>");
+  saveWifi(ssid, pass);
+}
+
+static void onForget() {
+  if (!pinOk()) { sendPage("<p class=\"bad\">Wrong setup password. Nothing was changed.</p><p><a href=\"/wifi\">Back</a></p></main></body></html>"); return; }
+  sendPage("<p>The saved Wi-Fi is forgotten. The board goes back to the default Wi-Fi in its program, "
+           "and the setup hotspot opens.</p><p><a href=\"/wifi\">Back</a></p></main></body></html>");
+  forgetWifi();
+}
+
+static void onScan() {
+  if (!g_scanning && g_scan_json == "[]") {
+    WiFi.scanNetworks(true);              // in the background; the page asks again
+    g_scanning = true;
+  }
+  if (g_scanning) { g_web.send(200, "application/json", "{\"scanning\":true}"); return; }
+  String body = "{\"networks\":" + g_scan_json + "}";
+  g_scan_json = "[]";                     // the next visit searches again
+  g_web.send(200, "application/json", body);
+}
+
+static void onNotFound() {
+  if (g_ap) {                             // the hotspot: every address leads to the setup page
+    g_web.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/wifi", true);
+    g_web.send(302, "text/plain", "");
+    return;
+  }
+  g_web.send(404, "text/plain", "not found");
+}
+
+static void webBegin() {
+  g_web.on("/", HTTP_GET, []() { sendPage(PAGE_LIVE); });
+  g_web.on("/wifi", HTTP_GET, []() { sendPage(PAGE_WIFI); });
+  g_web.on("/api/live", HTTP_GET, []() {
+    g_web.sendHeader("Cache-Control", "no-store");
+    g_web.send(200, "application/json", liveJson());
+  });
+  g_web.on("/api/scan", HTTP_GET, onScan);
+  g_web.on("/save", HTTP_POST, onSave);
+  g_web.on("/forget", HTTP_POST, onForget);
+  g_web.onNotFound(onNotFound);
+  g_web.begin();
+  g_web_on = true;
+}
+
+// requests from the USB cable (commands V X U Y), applied here so only this task touches the settings
+static void applyRequests() {
+  NetRequest r;
+  NET_LOCK();
+  r = g_req;
+  g_req.wifi = g_req.forget = g_req.url = g_req.key = false;
+  NET_UNLOCK();
+  if (r.url && g_url != r.url_v) {        // written to flash only when it really changed
+    g_url = r.url_v;
+    g_prefs.putString("url", g_url);
+    cloudReset();
+  }
+  if (r.key && g_key != r.key_v) {
+    g_key = r.key_v;
+    g_prefs.putString("key", g_key);
+    cloudReset();
+  }
+  if (r.forget) forgetWifi();
+  if (r.wifi) saveWifi(String(r.ssid), String(r.pass));
+}
+
+static void netTask(void *) {
+  g_prefs.begin("scqc", false);
+  g_ssid = g_prefs.getString("ssid", DEFAULT_WIFI_SSID);
+  g_pass = g_prefs.getString("pass", DEFAULT_WIFI_PASS);
+  g_url = g_prefs.getString("url", "");
+  g_key = g_prefs.getString("key", "");
+  g_insecure = g_prefs.getBool("insecure", false);
+  copyStr(g_apname, sizeof g_apname, AP_NAME);
+  WiFi.persistent(false);                 // the board keeps the Wi-Fi itself (Preferences), not twice
+  WiFi.setHostname(HOSTNAME);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  webBegin();
+  startConnect();
+  for (;;) {
+    applyRequests();
+    netStep();
+    if (g_ap) g_dns.processNextRequest();
+    g_web.handleClient();
+    heartbeat();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+static void netBegin() {
+  xTaskCreatePinnedToCore(netTask, "wifi", 16384, NULL, 1, NULL, 0);
+}
+#else
+static void netBegin() {}
+#endif
+
+// USB commands V X U Y N (handled in loop(), on core 1)
+static const char *skipSpaces(const char *a) {
+  while (*a == ' ') a++;
+  return a;
+}
+
+static void cmdNet(char cmd, const char *args) {
+  const char *a = skipSpaces(args);
+  if (cmd == 'N') {
+    NetStatus n;
+    NET_LOCK();
+    n = g_net;
+    NET_UNLOCK();
+    Serial.print("N ");
+    Serial.print(n.state); Serial.print(' ');
+    Serial.print(n.ip); Serial.print(' ');
+    Serial.print(n.rssi); Serial.print(' ');
+    Serial.print(n.hotspot ? 1 : 0); Serial.print(' ');
+    Serial.print(n.cloud[0] == 'o' && n.cloud[1] == 'k' ? "ok" : "no"); Serial.print(' ');
+    Serial.println(n.ssid);
+    return;
+  }
+  NET_LOCK();
+  if (cmd == 'V') {
+    const char *tab = strchr(a, '\t');
+    size_t ln = tab ? (size_t)(tab - a) : strlen(a);
+    if (ln > 32) ln = 32;
+    memcpy(g_req.ssid, a, ln);
+    g_req.ssid[ln] = 0;
+    copyStr(g_req.pass, sizeof g_req.pass, tab ? tab + 1 : "");
+    g_req.wifi = ln > 0;
+  } else if (cmd == 'X') {
+    g_req.forget = true;
+  } else if (cmd == 'U') {
+    copyStr(g_req.url_v, sizeof g_req.url_v, strcmp(a, "-") ? a : "");
+    size_t n = strlen(g_req.url_v);
+    while (n > 0 && g_req.url_v[n - 1] == '/') g_req.url_v[--n] = 0;
+    g_req.url = true;
+  } else if (cmd == 'Y') {
+    copyStr(g_req.key_v, sizeof g_req.key_v, strcmp(a, "-") ? a : "");
+    g_req.key = true;
+  }
+  NET_UNLOCK();
+  Serial.println("OK");
+}
+
 static void handleLine(char *line) {
   char cmd = line[0];
   char *args = line + 1;
@@ -444,12 +1078,19 @@ static void handleLine(char *line) {
     case 'I':
       if (n >= 3) cmdInfer(a, b, c); else Serial.println("R 0 ERR args");
       break;
+    case 'N':
+    case 'V':
+    case 'X':
+    case 'U':
+    case 'Y':
+      cmdNet(cmd, args);
+      break;
     default:
       break;                                 // unknown line: ignore (noise on the cable)
   }
 }
 
-static char g_line[80];
+static char g_line[200];
 static size_t g_len = 0;
 
 void setup() {
@@ -471,6 +1112,7 @@ void setup() {
   Serial.println();
   Serial.print("BOOT SCQC-ESP32 ");
   Serial.println(FW_VERSION);
+  netBegin();                                // Wi-Fi on the other core (nothing to do in the PC test build)
 }
 
 void loop() {
@@ -499,6 +1141,11 @@ void loop() {
     motorApply(0);
   }
   if (!g_link_ok) digitalWrite(PIN_LED_LINK, (millis() / 400) % 2 ? HIGH : LOW);
+  if (g_netmsg_ready) {                      // Wi-Fi news (only this task prints, so lines never mix)
+    Serial.print("# ");
+    Serial.println(g_netmsg);
+    g_netmsg_ready = false;
+  }
 #ifdef HOST_TEST
   hostIdle();
 #endif

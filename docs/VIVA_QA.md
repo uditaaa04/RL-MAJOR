@@ -23,7 +23,7 @@ calls; an ESP32 runs the belt and takes over the checking when the laptop is ove
 |---|---|---|---|
 | Edge | ESP32 on the belt | two IR sensors, belt motor, reject arm, safety stop, **and** a last-resort damage check | tiny CNN, 11,705 numbers, 48 x 48 grey picture |
 | Gateway | laptop | USB webcam, talks to both sides, runs the Q-learning agent, **checks every box first** | MobileNetV3-Small, 128 px |
-| Cloud | AWS EC2 (Mumbai) | **second opinion** on the boxes it is asked about, dashboard, backups | MobileNetV3-Large, 160 px |
+| Cloud | Render web service (Singapore) | **second opinion** on the boxes it is asked about, dashboard | MobileNetV3-Large, 160 px |
 
 ### 3. "What do you mean by second opinion?"
 1. The laptop's model checks every box first. Its verdict is kept.
@@ -74,7 +74,7 @@ So it is a last resort and nothing more.
 
 ### 9. "Are the ESP32 time and the cloud time real?"
 * ESP32: no. No board was connected. The time is worked out from the cable speed (460,800 baud) and 40 ns per multiply. The accuracy is exact: the PC does the same arithmetic as the firmware and a test checks they agree. `MEASURE_SPEED_VS_ACCURACY.bat` with the board plugged in replaces the estimate.
-* Cloud: no. The server ran on the same laptop, so there is no Internet in that number. It must be measured again after the AWS deployment.
+* Cloud: the 5.7 ms in the table, no: the server ran on the same laptop. Since then it runs on Render (Singapore) and was measured from the gateway laptop over the Internet: 83 ms per box photo (95th percentile 97 ms), of which 5.2 ms is the model and the rest the network.
 
 ---
 
@@ -348,7 +348,7 @@ better. It is a side result.
 | Laptop model time | measured on this laptop |
 | ESP32 time | estimate, board not connected |
 | ESP32 firmware | compiled for a PC and tested there against the laptop code; not yet run on a real board |
-| Cloud time | server on the same PC; AWS not deployed yet |
+| Cloud time | measured over the Internet to Render: 83 ms per photo (model 5.2 ms); not yet with the real belt |
 | Every policy comparison | simulated belt, network and timing; real photos and real model verdicts |
 | Darker / blurred photos (E8) | the public test photos changed by software; not taken on a belt |
 | Wiring guide and circuit diagram | checked against the firmware pin list; not built |
@@ -365,9 +365,18 @@ No. A factory puts a strong computer next to the line and rarely needs the cloud
 method matters where a cheap local check exists and a better remote one is limited: many cameras sharing one
 uplink, pay-per-call vision services, battery devices.
 
-### 38. "What runs on AWS, and what if it goes down?"
-One EC2 instance in Mumbai: the big model, the dashboard, backups. If it is down, cloud answers stop arriving,
-the laptop's verdicts are used, and the agent stops spending calls. Inspection never depends on the cloud.
+### 38. "What runs in the cloud, and what if it goes down?"
+One Render web service in Singapore: the big model, the dashboard, the box log. If it is down (or asleep: the
+free plan sleeps after 15 minutes without requests), cloud answers stop arriving, the laptop's verdicts are used,
+and the agent stops spending calls. Inspection never depends on the cloud. The same server also runs on AWS EC2
+with the included scripts; Render was chosen because it is free and gives https without setup.
+
+### 38b. "How does the dashboard stay live, and does the ESP32 use Wi-Fi?"
+The dashboard and the gateway use long polling: each waits on the server, which answers the moment a box
+finishes, a sensor changes or a button is pressed. So an update needs one trip over the Internet (about 0.1 s),
+not a timer. The belt, sensors, arm and tiny model stay on the USB cable (steady, about 1 ms). The ESP32's
+Wi-Fi (firmware 4, on its second core) is extra: it sends the board's own readings to the cloud, has a setup
+hotspot when no Wi-Fi works, and a live page on the local network.
 
 ---
 

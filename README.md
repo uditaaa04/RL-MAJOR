@@ -6,7 +6,7 @@ Boxes travel on a conveyor. A webcam photographs each one. **Three places** can 
 |---|---|---|---|---|
 | **Edge** | ESP32 on the belt | tiny CNN, about 6,000 numbers, grey 32 or 48 px photo | needs no Internet and no laptop CPU; also runs the belt | least accurate; the photo must be sent to it over USB |
 | **Gateway** | laptop next to the belt | MobileNetV3-Small, 128 px | fast, good accuracy | slow when the laptop is overloaded |
-| **Cloud** | AWS EC2 (Mumbai) | MobileNetV3-Large, 160 px | most accurate | the photo crosses the Internet; the answer can come too late |
+| **Cloud** | Render web service (Singapore), live at https://smart-conveyor-cloud.onrender.com | MobileNetV3-Large, 160 px | most accurate | the photo crosses the Internet; the answer can come too late |
 
 They work as a **second opinion** system. The gateway's model checks **every box first** (about 2 ms). A
 **Q-learning agent on the gateway** then decides whether the cloud should check it too, using how sure the
@@ -24,10 +24,13 @@ ahead on average, inside the range of chance. Everything about the belt, the net
 simulated; the photos and the models' verdicts are real. Nothing has run on real hardware yet.
 
 ```
- ESP32 (edge)  <---- USB cable ---->  laptop (gateway)  <---- Internet ---->  AWS (cloud)
- belt motor, 2 IR sensors,            webcam, Q-learning agent,               big model,
- reject arm, tiny model               small model, link to both sides         dashboard, box log
+ ESP32 (edge)  <---- USB cable ---->  laptop (gateway)  <---- Internet (https) ---->  Render (cloud)
+ belt motor, 2 IR sensors,            webcam, Q-learning agent,                       big model,
+ reject arm, tiny model               small model, link to both sides                 dashboard, box log
+      \_________________ ESP32's own Wi-Fi (firmware 4): sensors, belt, arm ________/
 ```
+Every finished box, sensor change and dashboard button travels at once (long polling, no 1-second timer):
+about 0.1 s from the belt to the dashboard over the Internet.
 
 The project's experiment is the **speed-accuracy trade-off between the three places**
 (`MEASURE_SPEED_VS_ACCURACY.bat`, table below), what a cloud second opinion is worth on real photos
@@ -50,38 +53,53 @@ pip install -r requirements-laptop.txt
 python -m server.app                       # terminal 1: the cloud node, here on this PC -> http://localhost:8000
 python -m gateway_node.main --mock         # terminal 2: gateway with a pretend belt and a pretend ESP32
 python -m gateway_node.main --mock --esp32 auto    # ... pretend belt, tiny model on a real ESP32 (USB)
-python -m gateway_node.main --server http://<ec2-ip>:8000   # the real line: ESP32 + webcam + AWS
-python -m tools.tradeoff --esp32 auto --server http://<ec2-ip>:8000   # speed against accuracy, all real
+python -m gateway_node.main --server https://<name>.onrender.com           # the real line: ESP32 + webcam + cloud
+python -m gateway_node.main --manual --server https://<name>.onrender.com  # hand test: belt off, boxes moved by hand
+python -m tools.tradeoff --esp32 auto --server https://<name>.onrender.com # speed against accuracy, all real
+python -m tools.flash_esp32                                                # put firmware 4 (Wi-Fi) on the ESP32
 ```
 
-## Put the cloud node on AWS
+## The cloud node (live on Render)
 
-Easiest: AWS CloudShell, 3 steps, in [START_HERE.md](START_HERE.md). From a PC with the AWS CLI:
+The cloud server runs on a free Render web service in Singapore: **https://smart-conveyor-cloud.onrender.com**
+(dashboard; every API call needs the key). It deploys itself from this repository (`render.yaml`, branch
+`claude/smart-conveyor-project`). The laptop keeps the address and key in `cloud/.secrets/aws_server.json`
+(never uploaded). Measured from the gateway laptop in India: ping 71 ms, a box photo checked in the cloud
+83 ms (95th percentile 97 ms), of which 5.2 ms is the model itself. Free-plan limits (sleeps after 15 minutes
+without requests, box log wiped on restart) and the full guide: **[docs/CLOUD_RENDER.md](docs/CLOUD_RENDER.md)**.
 
-```powershell
-.\cloud\deploy_aws.ps1               # EC2 + Elastic IP + S3 + CloudWatch + API key, about 5-8 min
-python -m tools.check_server --server http://<elastic-ip>:8000
-.\cloud\teardown_aws.ps1             # remove it all when done
-```
-Full guide: **[docs/CLOUD_AWS.md](docs/CLOUD_AWS.md)**.
+The AWS version (EC2 + S3 + CloudWatch, `cloud/deploy_cloudshell.sh`, `cloud/deploy_aws.ps1`) is still included
+as an alternative: **[docs/CLOUD_AWS.md](docs/CLOUD_AWS.md)**.
+
+## Live data and hand tests
+
+- `FLASH_ESP32.bat`: puts firmware 4 on the ESP32 (no Arduino IDE clicking). The board then joins the Wi-Fi in
+  `esp32_node/secrets.h` (never uploaded; copy `secrets.example.h`), or opens its own setup hotspot with a setup
+  page at http://192.168.4.1 when no Wi-Fi works. Online, it has its own live page (`http://<name>.local`) and
+  sends its sensors, belt and arm to the cloud dashboard by itself.
+- `MANUAL_TEST.bat`: real ESP32, sensors, arm and webcam, belt motor off. Move each box by hand past IR sensor 1
+  (photo + decision) and IR sensor 2 (the arm pushes a damaged box). Every box appears on the dashboard live.
+- Dashboard panel **The ESP32 on the belt, live**: both IR sensors light up as they see a box, belt, arm pushes,
+  USB and Wi-Fi state, and the delay from the gateway to the screen. Buttons: belt on/off, push the arm, check a
+  box now.
 
 ## Folder map
 
 | Folder | What is inside |
 |---|---|
-| `esp32_node/` | **edge node firmware** (`esp32_node.ino`): belt, IR sensors, reject arm, tiny-model engine, 3-second safety stop. No libraries needed. |
+| `esp32_node/` | **edge node firmware** (`esp32_node.ino`, version 4): belt, IR sensors, reject arm, tiny-model engine, 3-second safety stop; Wi-Fi with setup hotspot, live page and readings to the cloud (`secrets.example.h`, `root_ca.h`). No extra libraries needed. |
 | `gateway_node/` | **gateway program**: `esp32_link.py` (USB link, pretend ESP32), `camera.py` (webcam), `gateway_worker.py` (small model), `cloud_client.py`, `netmon.py`, **`pipeline.py`** (box-by-box loop), `main.py` |
-| `server/` | **cloud node**: `/infer`, `/ping`, dashboard, API-key auth, SQLite box log, model registry, S3/CloudWatch |
+| `server/` | **cloud node**: `/infer`, `/ping`, dashboard with instant updates (long polling), API-key auth, SQLite box log, model registry, `/api/edge` (the ESP32 over Wi-Fi), S3/CloudWatch on AWS |
 | `common/` | shared: state, reward, **Q-learning agent** (`rl.py`), baseline policies, **`tiny.py`** (the ESP32 model's file format and exact arithmetic), image I/O, fast algorithms |
 | `sim/` | simulator of belt + ESP32 + gateway + network + cloud, **Q pre-training** (`train_q.py`), experiments E1-E9 |
 | `vision/` | `train.py` (gateway and cloud models), **`train_tiny.py`** (ESP32 model), synthetic box generator |
 | `models/` | `edge_tiny.bin` (ESP32), `gateway_model.onnx`, `cloud_model.onnx`, `q_table.npz`, `rule_params.json`, `model_card.json` |
 | `tools/` | `go.py` (the double-click launcher), **`tradeoff.py`**, `esp32_check.py`, `run_experiment.py`, `report_real.py`, `check_server.py`, `capture_dataset.py`, `roi_check.py`, `calibrate.py` |
-| `cloud/` | AWS deployment: `deploy_cloudshell.sh`, `deploy_aws.ps1`, `aws/cloudformation.yaml`, `Dockerfile` |
+| `cloud/` | Render (`requirements-render.txt`; the Blueprint is `render.yaml` in the top folder) and AWS deployment: `deploy_cloudshell.sh`, `deploy_aws.ps1`, `aws/cloudformation.yaml`, `Dockerfile` |
 | `tests/` | automatic tests, including the **real firmware file compiled for the PC** and driven through the gateway's link code |
 | `benchmark_stfg/` | second, public test on the Synthetic Task Flow Graphs dataset |
 | `results/` | `TRADEOFF.md`, `SIM_RESULTS.md`, `E6_SENSITIVITY.md`, `STFG_RESULTS.md`, figures |
-| `docs/` | ESP32_WIRING, ALGORITHM, VIVA_QA, DEMO_SCRIPT, PROJECT_OVERVIEW, CLOUD_AWS, EFFICIENT_ALGORITHMS, and `hardware/` (build guide PDF + circuit diagram) |
+| `docs/` | ESP32_WIRING (also flashing and Wi-Fi), ALGORITHM, VIVA_QA, DEMO_SCRIPT, PROJECT_OVERVIEW, CLOUD_RENDER, CLOUD_AWS, EFFICIENT_ALGORITHMS, and `hardware/` (build guide PDF + circuit diagram) |
 
 ## Re-train / re-run anything
 
@@ -113,7 +131,7 @@ Full guide: **[docs/CLOUD_AWS.md](docs/CLOUD_AWS.md)**.
 - The ESP32 is both slower (77 ms against 1 ms) and less accurate than the gateway, because the photo has to be sent to it over the cable first. It is not there to win this table. It is there for when the gateway is too busy and the Internet is too slow: then it is the only place that still answers before the box reaches the arm.
 - Going from the gateway to the cloud buys 5.2 points of accuracy for 4 ms more per box.
 - The ESP32 time is an estimate until this is run with the board plugged in. Its accuracy is exact: the same arithmetic as the firmware.
-- The cloud server ran on this same PC, so its time has no Internet in it. Run this again with --server http://<AWS address>:8000 for the real number.
+- The cloud server ran on this same PC, so its time has no Internet in it. Measured since then through the Internet on Render: 83 ms per box photo from the gateway laptop (`tools.check_server`). Run this again with the board plugged in for the full real table.
 
 **Second opinion on real photos** (594 test photos, public; measured 2026-11-26 00:53)
 
@@ -237,8 +255,8 @@ Full tables: [results/TRADEOFF.md](results/TRADEOFF.md), [results/SIM_RESULTS.md
 - The webcam is on the gateway, so a photo has to be sent to the ESP32 first. In normal conditions the
   ESP32 is therefore slower *and* less accurate than the gateway. It earns its place only when the gateway
   is overloaded and the Internet is slow: then it is the only checker that answers in time.
-- Rows marked "emulated" or "on this PC" in the speed-accuracy table are not final: plug the ESP32 in and
-  set up AWS, then run the measurement again.
+- Rows marked "emulated" or "on this PC" in the speed-accuracy table are not final: plug the ESP32 in and run
+  the measurement again (the cloud row then goes over the Internet to Render).
 - The decision experiments (E1-E6) are simulated. The real belt has not been measured.
 - On average the Q-learning agent is level with a well-tuned adaptive rule. It does not beat it by a wide
   margin. Its advantage is that nobody has to tune it.

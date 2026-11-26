@@ -11,7 +11,7 @@ Cameras + AI are used to catch damaged products on moving belts. The AI can run 
   a tiny model. Always there, but the least accurate.
 * **next to the belt (gateway)**: a laptop with the webcam and a small model. Fast and fairly accurate, unless
   the laptop is busy.
-* **on a cloud server (AWS EC2, Mumbai)** with a big model: the most accurate, but the answer travels over the
+* **on a cloud server (Render, Singapore)** with a big model: the most accurate, but the answer travels over the
   Internet and can arrive **after the product has already passed the reject point**.
 
 Fixed choices fail: *always-edge* throws away too many good boxes and lets more damaged ones through;
@@ -21,7 +21,7 @@ that they were not written for.
 ## 2. Objectives
 
 1. Build a three-node test-bed: **ESP32 edge node** (belt, two IR sensors, reject arm, tiny model),
-   **gateway laptop** (webcam, communication with both sides, Q-learning), **AWS cloud node** (big model).
+   **gateway laptop** (webcam, communication with both sides, Q-learning), **cloud node on Render** (big model).
 2. Train three damage-detection models of increasing size and **measure the speed-accuracy trade-off between
    edge, gateway and cloud processing** on the same photos.
 3. Formulate the per-box choice among the three places as a reinforcement-learning problem with an
@@ -36,7 +36,7 @@ that they were not written for.
 | | Phase I | Phase II (this project) |
 |---|---|---|
 | Application | IR event duration → LOW/MED/HIGH "task" | real visual inspection of boxes with three CNNs |
-| Nodes | one board, simulated cloud delay | ESP32 (edge) + laptop (gateway) + real AWS EC2 server (cloud) |
+| Nodes | one board, simulated cloud delay | ESP32 (edge) + laptop (gateway) + real cloud server on Render (cloud) |
 | State | 3 states (task complexity) | 432 states from measurements (spare time, cloud time, ping, gateway speed, queue) |
 | Actions | edge / cloud | ESP32 / gateway / cloud |
 | Reward | weighted latency/CPU/"wrongness" | **expected cost of the box** (escape / false reject / unchecked) from measured model quality |
@@ -67,9 +67,10 @@ that they were not written for.
  │ ping every 0.5 s, test image every 2 s ──────────────────────────┤                              │
  └──────────────────────────────────────────────────────────────────┼──────────────────────────────┘
                               every request carries the API key      ▼
- ┌──────────────────────── AWS ap-south-1 (cloud) ─────────────────────────────────────────────────┐
- │ EC2 + Elastic IP: /infer (big CNN, ONNX), /ping, dashboard, control buttons, box log (SQLite)    │
- │ S3: box logs + Q-tables   CloudWatch: metrics, alarms, logs   SSM: API key   CloudFormation      │
+ ┌──────────────────────── Render, Singapore (cloud) ──────────────────────────────────────────────┐
+ │ web service (https): /infer (big CNN, ONNX), /ping, dashboard, control buttons, box log (SQLite) │
+ │ instant updates (long polling) to the dashboard and the gateway; /api/edge: the ESP32 over Wi-Fi │
+ │ (alternative included: AWS EC2 + S3 + CloudWatch + SSM, cloud/aws/cloudformation.yaml)            │
  └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -242,7 +243,8 @@ Average over all 10 situations: Q-learning (online) -2.64 against the best hand-
   first, so in normal conditions it is slower than the gateway as well. It earns its place only when the
   gateway is overloaded and the Internet is slow.
 * Rows of the speed-accuracy table marked "emulated" or "on this PC" are not final until the measurement is
-  repeated with the board plugged in and the AWS server set up.
+  repeated with the board plugged in. The cloud server is now on Render and its time over the Internet was
+  measured from the gateway laptop: 83 ms per box photo (95th percentile 97 ms), 5.2 ms of it the model.
 * The models are trained on real photographs from a **public** set, not on photos from this project's belt.
 * A hand-tuned **confidence rule** that uses the same confidence signal is **level** with the agent: over 200
   re-drawn test sets the gap between them is within chance (E9). The proven gain is the second-opinion design
@@ -254,9 +256,11 @@ Average over all 10 situations: Q-learning (online) -2.64 against the best hand-
   public photos; they are not taken on a belt.
 * With a tight cloud-call limit, and whenever only the limit changes, the agent and the confidence rule do the
   same thing. With no limit and clean photos, simply asking the cloud for every box is as good as anything.
-* The decision experiments are **simulated**. **Nothing has run on real hardware yet:** the ESP32 firmware is
-  not flashed, the belt is not built (wiring guide and circuit diagram are ready and checked against the
-  firmware, `docs/hardware/`), AWS is not deployed.
+* The decision experiments are **simulated**. **The belt has not run on real hardware yet:** the belt is not built
+  (wiring guide and circuit diagram are ready and checked against the firmware, `docs/hardware/`), and firmware 4
+  (with Wi-Fi) still has to be flashed and tried on the board. The cloud server is deployed (Render).
+* Render's free plan sleeps after 15 minutes without requests (about a minute to wake up) and keeps the box log
+  only until the next restart.
 
 ## 8. References
 

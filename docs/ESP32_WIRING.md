@@ -1,7 +1,8 @@
 # ESP32 edge node: wiring and flashing
 
 The ESP32 runs the belt (motor, two IR sensors, reject arm) and the tiny edge model.
-It talks to the gateway laptop over the **USB cable**. No Wi-Fi setup, no extra Arduino libraries.
+It talks to the gateway laptop over the **USB cable** for everything that is time-critical. Firmware 4 also joins
+Wi-Fi (section 6) to send its own readings to the cloud dashboard. No extra Arduino libraries are needed.
 
 ## 1. Wiring
 
@@ -58,11 +59,20 @@ With two sensors the arm fires exactly when the box arrives, so two sensors are 
 
 ## 2. Flash the board (once)
 
-1. Arduino IDE 2: **File > Open** and pick `esp32_node/esp32_node.ino`.
+**One double-click: `FLASH_ESP32.bat`.** It uses the arduino-cli inside Arduino IDE 2 and the ESP32 boards already
+installed there, picks the board and partition by itself, uploads, then shows what the board says (its Wi-Fi
+messages start with `#`). Close the Serial Monitor and any gateway window first.
+
+Before the first flash, put your Wi-Fi names and passwords in `esp32_node/secrets.h` (copy `secrets.example.h`).
+That file stays on this PC: it is never uploaded to GitHub.
+
+By hand in Arduino IDE 2:
+1. **File > Open** and pick `esp32_node/esp32_node.ino`.
 2. **Tools > Board > esp32 > ESP32 Dev Module**.
-3. Plug the ESP32 in. **Tools > Port**: pick the COM port that appeared.
+3. **Tools > Partition Scheme > Huge APP (3MB No OTA/1MB SPIFFS)**. Wi-Fi + https do not fit the default 1.2 MB.
+4. Plug the ESP32 in. **Tools > Port**: pick the COM port that appeared.
    No new port? Install the USB driver for the chip next to the USB socket: CP2102 ("CP210x driver") or CH340 ("CH340 driver").
-4. Press **Upload** (arrow button). If it stays on "Connecting....", hold the **BOOT** button on the board until it starts writing.
+5. Press **Upload** (arrow button). If it stays on "Connecting....", hold the **BOOT** button on the board until it starts writing.
 
 The model is not inside the firmware. The gateway sends it to the board every time it starts, so
 re-training never needs a re-flash.
@@ -73,7 +83,8 @@ Open **Tools > Serial Monitor**, set **460800 baud** and **Newline**. Type a let
 
 | Type | What should happen |
 |---|---|
-| `H` | `H SCQC-ESP32 3 0 ...` comes back (3 = firmware version). The board is alive. |
+| `H` | `H SCQC-ESP32 4 0 ...` comes back (4 = firmware version). The board is alive. |
+| `N` | `N ONLINE 192.168.x.x -55 0 ok Hotspot`: Wi-Fi state, address, signal, setup hotspot on/off, cloud reachable, Wi-Fi name. |
 | `P` | The reject arm swings out and back. |
 | `B 150` | The belt runs, then stops by itself after 3 seconds. That stop is the safety rule: no gateway, no belt. |
 | (hand in front of IR sensor 1) | `E C ...` appears. |
@@ -99,8 +110,9 @@ the board resets.
    on the real board), both sensors show an event when a hand passes.
 2. `CHECK_CAMERA.bat`: one picture from every camera on the laptop. Type the number of the camera that looks at
    the table, and the crop square.
-3. `START_REAL_LINE.bat`: hold a box under the webcam so that it also passes IR sensor 1. The photo is taken at
-   that moment. Move it past IR sensor 2 **within about 2 seconds**. The dashboard shows the photo, what the
+3. `MANUAL_TEST.bat` (belt motor off): hold a box under the webcam so that it also passes IR sensor 1. The photo
+   is taken at that moment. Move it past IR sensor 2 **within about 3 seconds** (`conveyor.manual_window_s`).
+   (`START_REAL_LINE.bat` does the same with the belt running and less time.) The dashboard shows the photo, what the
    laptop's model said, whether the cloud was asked, and the verdict. Too slow? The box is still counted, with
    the note `arm-sensor-missed` in the log, and the arm is not asked to push. Press Enter in the black window to stop.
 4. `MEASURE_SPEED_VS_ACCURACY.bat` (line stopped, board still plugged in): the real time the ESP32 needs per
@@ -110,8 +122,31 @@ What this test can and cannot show: sensors, photo, decision, verdict and the US
 not: a hand is not a belt. And the models were trained on public photos, so their good / damaged verdicts on
 your own boxes can be wrong until they are retrained on your photos.
 
-## 5. Why USB and not Wi-Fi
+## 5. Why USB for the belt, and Wi-Fi only on top
 
 - The board is plugged into the laptop for power anyway.
-- Nothing to configure, and it works in a room with bad Wi-Fi.
+- The belt keeps working in a room with bad Wi-Fi.
 - The link time is steady (a 32 x 32 photo takes about 22 ms to send), so the edge timing is repeatable.
+- Wi-Fi runs on the ESP32's other processor core. A slow Wi-Fi or a slow cloud can never delay a sensor event,
+  the arm or the tiny model.
+
+## 6. Wi-Fi (firmware 4)
+
+Settings in `esp32_node/secrets.h`: main Wi-Fi, backup Wi-Fi (optional), setup hotspot name and password (8 or more
+characters), setup page address (default 192.168.4.1) and the live page name (`HOSTNAME` -> `http://<HOSTNAME>.local`).
+
+| What happens | What you see |
+|---|---|
+| Power on | It joins the Wi-Fi saved from the setup page, otherwise the main Wi-Fi in `secrets.h`, then the backup. |
+| No Wi-Fi works within 15 s | Its own hotspot opens. Join it: the setup page opens by itself (or http://192.168.4.1). Pick the Wi-Fi (2.4 GHz only), its password, the hotspot password, **Save**. The page shows when it is online and its address. |
+| Online | The hotspot closes (after 20 s, or 2 minutes if a phone is still on it). Live page: `http://<HOSTNAME>.local` or its address. Its readings go to the cloud dashboard every 2 s and at once when a sensor changes. |
+| Wi-Fi lost | It keeps trying; after 20 s the setup hotspot opens again until the Wi-Fi is back. |
+| "Forget the saved Wi-Fi" (setup page) | Back to the networks in `secrets.h`, hotspot opens. |
+
+The cloud address and API key reach the board over USB: the gateway hands them over every time it connects (the
+board writes its memory only when they change). The board checks the cloud's https certificate against the root
+certificates in `esp32_node/root_ca.h` (Let's Encrypt and Google Trust Services, valid to 2035-2040). If that check
+ever fails, the setup page has a "skip the certificate check (testbed only)" box.
+
+Serial commands for Wi-Fi: `N` status, `V name<TAB>password` join a network, `X` forget it, `U <url>` cloud address,
+`Y <key>` cloud key.

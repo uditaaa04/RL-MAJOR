@@ -101,6 +101,7 @@ class Pipeline:
         self.last_seen = 0.0
         self.last_arm = 0.0                 # when the arm sensor last fired (to drop a double trigger)
         self.transit = None                 # measured camera->arm time (EWMA)
+        self.min_transit = 0.0              # manual tests (boxes moved by hand): at least this long to the arm
         self.stats = {"n": 0, "edge": 0, "gateway": 0, "cloud": 0, "missed": 0, "rejected": 0, "correct": 0,
                       "known": 0, "fallback": 0,
                       "first": 0,          # boxes the gateway's model checked first (second-opinion way)
@@ -123,8 +124,10 @@ class Pipeline:
     # ------------------------------------------------------------------
     def transit_estimate(self) -> float:
         if self.transit is not None and not self.arm_by_time:
-            return self.transit
-        return self.cam_to_arm / max(0.02, self.hw.belt_speed_mps())
+            t = self.transit
+        else:
+            t = self.cam_to_arm / max(0.02, self.hw.belt_speed_mps())
+        return max(t, self.min_transit)
 
     def _expect_at_arm(self, t0: float):
         """Arm fired by time: this box 'reaches the arm' one transit time after the camera saw it."""
@@ -135,20 +138,28 @@ class Pipeline:
         tm.daemon = True
         tm.start()
 
-    def on_box_at_camera(self):
+    def check_now(self):
+        """Dashboard button 'Check a box now': photo + decision + check, as if IR-1 had fired, but no box is
+        expected at the arm (it is not put in the belt queue, so it can never take a real box's verdict)."""
+        self.on_box_at_camera(manual=True)
+
+    def on_box_at_camera(self, manual: bool = False):
         t0 = time.perf_counter()
         with self.lock:
-            if t0 - self.last_seen < self.min_gap:
-                return                                  # IR glitch / same box
-            self.last_seen = t0
+            if not manual:
+                if t0 - self.last_seen < self.min_gap:
+                    return                              # IR glitch / same box
+                self.last_seen = t0
             box_id = self.next_id
             self.next_id += 1
-        self._expect_at_arm(t0)
+        if not manual:
+            self._expect_at_arm(t0)
         try:
             img = self.cam.capture_box(t0)          # first frame taken after IR-1 fired
         except Exception as e:
             print(f"[pipe] camera error: {e}")
-            self._add_unchecked(box_id, t0, f"camera: {e}")
+            if not manual:
+                self._add_unchecked(box_id, t0, f"camera: {e}")
             return
         truth = self.truth_fn(box_id) if self.truth_fn else None
         t_dec = time.perf_counter()
@@ -165,8 +176,11 @@ class Pipeline:
             with self.lock:
                 box = Box(box_id, t0, t_dec, deadline, GATEWAY, obs, None, truth=truth)
                 box.extra["first"] = True
+                if manual:
+                    box.extra["manual"] = True
                 self.boxes[box_id] = box
-                self.fifo.append(box_id)
+                if not manual:
+                    self.fifo.append(box_id)
                 self._imgs[box_id] = img              # kept in case the cloud is asked
             self.gw.submit(box_id, img, self._on_gateway_first)
             try:
@@ -182,8 +196,11 @@ class Pipeline:
             if a == CLOUD and not self.budget.take():  # no cloud call left: the gateway does it
                 a = GATEWAY
             box = Box(box_id, t0, t_dec, deadline, a, obs, s, truth=truth)
+            if manual:
+                box.extra["manual"] = True
             self.boxes[box_id] = box
-            self.fifo.append(box_id)
+            if not manual:
+                self.fifo.append(box_id)
             if a != GATEWAY:
                 self._imgs[box_id] = img              # kept for a possible fallback to the gateway
         if a == GATEWAY:
@@ -210,6 +227,9 @@ class Pipeline:
                 return
             if not res.get("ok"):
                 box.extra["error"] = res.get("error")
+                if box.extra.get("manual"):
+                    self._finalize(box, on_time=False)
+                    self._manual_done(box)
                 return                                 # no verdict: the arm will count it as missed
             thr = self.thr_by.get("GATEWAY", self.thr)
             p = float(res.get("p_damaged", 0.0))
@@ -232,6 +252,7 @@ class Pipeline:
                 ask_img = img
             elif not box.at_arm:
                 self._finalize(box, on_time=True)
+                self._manual_done(box)
         if ask_img is not None:
             self.cloud.submit(box_id, ask_img, max(0.05, box.deadline - time.perf_counter()), self.on_result)
 
@@ -271,6 +292,7 @@ class Pipeline:
                     box.extra.update(error=res.get("error"), cloud_late=True)
                 if not box.at_arm:
                     self._finalize(box, on_time=True)
+                    self._manual_done(box)
                 return
             if not res.get("ok"):
                 box.extra["error"] = res.get("error")
@@ -280,10 +302,14 @@ class Pipeline:
                         and box.deadline - now > 0.06):
                     box.extra["fallback"] = True
                     self.gw.submit(box_id, img, self.on_result)
+                elif box.extra.get("manual"):
+                    self._finalize(box, on_time=False)
+                    self._manual_done(box)
                 return                 # otherwise wait for the arm: it will be counted as missed
             box.result, box.t_result = res, now
             if not box.at_arm:
                 self._finalize(box, on_time=True)
+                self._manual_done(box)
 
     def on_box_at_arm(self):
         now = time.perf_counter()
@@ -357,6 +383,12 @@ class Pipeline:
             up = max(0.0, lat - (r.get("server_ms", 0) / 1000.0) - box.obs.rtt_ms / 1000.0)
         return first + self.e["p_cpu_active_w"] * r.get("jpeg_s", 0.0) + self.e["p_wifi_tx_w"] * up
 
+    def _manual_done(self, box: Box):
+        """A 'Check a box now' box has its verdict: report it at once (no arm, no belt queue)."""
+        if box.extra.get("manual") and not box.at_arm:
+            box.at_arm = True
+            self._log(box)
+
     def _finalize(self, box: Box, on_time: bool):
         box.finalized = True
         box.on_time = on_time
@@ -385,8 +417,10 @@ class Pipeline:
         rew = self.reward(answered_by, on_time, energy, conf)
         lat = ((box.t_result if on_time and box.t_result else time.perf_counter()) - box.t_decide)
         box.extra.update(reward=rew, energy=energy, latency=lat)
-        self.policy.outcome(box.box_id, box.action, on_time, lat, rew)
-        if box.extra.get("asked"):
+        manual = bool(box.extra.get("manual"))       # a test-button box: the agent does not learn from it
+        if not manual:
+            self.policy.outcome(box.box_id, box.action, on_time, lat, rew)
+        if box.extra.get("asked") and not manual:
             self.policy.cloud_call(answered_by == CLOUD)
             gw_res = box.extra.get("gw_result")
             if (self.spot_checks and answered_by == CLOUD and gw_res is not None and box.truth in ("good", "damaged")):

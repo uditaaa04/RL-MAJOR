@@ -3,6 +3,9 @@
 **Start**
 - No hardware: double-click `START_DEMO.bat`. If the ESP32 is plugged in by USB, its tiny model is really used.
 - Real belt: double-click `START_REAL_LINE.bat` (ESP32 on USB, webcam on the laptop).
+- Real hardware, no belt yet: double-click `MANUAL_TEST.bat` and move the boxes by hand (section below).
+- The dashboard is on the Internet: https://smart-conveyor-cloud.onrender.com. Open it 2 minutes before you start
+  (the free server sleeps after 15 minutes without requests).
 
 The dashboard opens by itself. Press **Full screen**. Pick **Light theme** for a projector, **Dark theme** for a screen.
 
@@ -26,6 +29,16 @@ the belt. When it ends it prints how many boxes were missed.
 | 3:45 | **Who decides** -> *Always the cloud*, then **Overload the cloud server** | "This is the old way: one place per box. Boxes turn red: missed." Switch back to *Q-learning agent*, overload off. |
 | 4:10 | Open the **Results** page, first two tables | "Same photos at all three places: accuracy and time. And the second table: the laptop and the cloud agree on nine boxes in ten. Sending only the least-sure quarter to the cloud gives almost the same accuracy as sending everything." |
 | 4:40 | Scroll down to **Which gaps are real** and **When the photos get worse** | "Below are the simulated decision experiments, replaying real photos. This table says which gaps are real and which are within chance. And this one shows what happens when the photos get darker or blurred: asking the cloud for everything becomes the worst choice, and the agent corrects itself from spot checks." |
+
+## Live hardware demo by hand (MANUAL_TEST, 2 minutes)
+
+| Do | Say |
+|---|---|
+| Point at **The ESP32 on the belt, live** | "These are the board's own readings: both IR sensors, the belt, the arm, its USB link and its own Wi-Fi." |
+| Pass a hand in front of IR sensor 1, then 2 | "The dots light up on the dashboard about a tenth of a second later: sensor -> ESP32 -> USB -> laptop -> Internet -> cloud -> this screen." Point at **Gateway to this screen**. |
+| Hold a box under the camera past IR sensor 1, then move it past IR sensor 2 | "IR sensor 1 took the photo. The laptop checked it, the agent decided whether the cloud should check it too, and at IR sensor 2 the arm pushed it off because it is damaged." Point at the new box in **Latest boxes**. |
+| Press **Push the arm**, then **Check a box now** | "Buttons in the cloud reach the belt in one network trip: no timer. Check a box now takes a photo and decides, as if the sensor had fired." |
+| Unplug nothing, just say it | "The belt never waits for the Wi-Fi: sensors, arm and the tiny model are on the USB cable. The ESP32's Wi-Fi only reports, and it has its own setup hotspot if the Wi-Fi is missing." |
 
 ## The honest sentences to have ready
 

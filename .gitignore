@@ -19,3 +19,5 @@ models_candidate/
 *.pt
 data/public/
 data/real/
+# ESP32 Wi-Fi names and passwords (copy esp32_node/secrets.example.h) - never commit
+esp32_node/secrets.h

@@ -90,6 +90,7 @@ conveyor:
   belt_duty: 0.6           # motor PWM duty 0..1 at start
   speed_mps_at_full: 0.30  # belt speed at duty 1.0                  <-- MEASURE (tools/calibrate.py)
   guard_s: 0.05            # safety margin: the arm needs this much time
+  manual_window_s: 3.0     # MANUAL_TEST (boxes moved by hand): seconds a box gets from sensor 1 to sensor 2
   min_box_gap_s: 0.25      # ignore IR glitches closer than this
   defect_rate_assumed: 0.30  # share of damaged boxes expected (testbed)
 

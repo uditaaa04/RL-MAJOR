@@ -4,8 +4,12 @@ Smart Conveyor QC - the GATEWAY program (runs on the laptop next to the belt).
 It owns the webcam, talks to the ESP32 (USB cable) and to the cloud server (Internet), and its
 Q-learning agent decides for every box where the photo is checked: ESP32, gateway or cloud.
 
-    # real belt: ESP32 plugged in by USB, webcam on this laptop, cloud server on AWS
-    python -m gateway_node.main --server http://<ec2-public-ip>:8000
+    # real belt: ESP32 plugged in by USB, webcam on this laptop, cloud server on Render (or AWS)
+    python -m gateway_node.main --server https://<name>.onrender.com
+
+    # manual test: real ESP32, sensors, arm and webcam, but the belt motor stays off and you move each box
+    # by hand past IR sensor 1 (photo) and IR sensor 2 (arm); every box shows up live on the dashboard
+    python -m gateway_node.main --manual --server https://<name>.onrender.com
 
     # no hardware at all (pretend belt, pretend ESP32, emulated Wi-Fi)
     python -m gateway_node.main --mock
@@ -22,6 +26,8 @@ Useful options
     --scenario busy      (mock) starting network: good busy bad bwcap lossy stalls down
     --resume             continue from the online-learned Q-table instead of the pre-trained one
     --no-learn           freeze the Q-table (no online learning)
+    --manual             boxes moved by hand: belt motor off, conveyor.manual_window_s seconds from sensor 1 to
+                         sensor 2, Q-table frozen (hand tests must not change what the agent learned)
 """
 from __future__ import annotations
 
@@ -30,6 +36,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 from common.config import load_config, project_path
@@ -120,10 +127,14 @@ def main():
     ap.add_argument("--belt", type=float, default=None, help="belt PWM duty 0..1")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--no-learn", action="store_true")
+    ap.add_argument("--manual", action="store_true",
+                    help="boxes moved by hand: belt motor off, more time to the arm, Q-table frozen")
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    if args.manual:
+        args.no_learn = True               # hand tests must not change what the agent has learned
     server = (args.server or os.environ.get("CONVEYOR_SERVER")
               or ("http://127.0.0.1:%d" % cfg["server"]["port"] if args.mock else cfg["server"]["cloud_url"]))
     if "<" in server:
@@ -148,7 +159,10 @@ def main():
     link = None
     if want.lower() not in ("mock", "off", "none"):
         try:
-            link = connect(cfg, tiny_model.blob if tiny_model else None, None if want.lower() == "auto" else want)
+            # the board's own Wi-Fi (firmware 4) sends its readings to the same cloud server: hand it the address
+            remote = server.startswith("http") and not any(h in server for h in ("127.0.0.1", "localhost", "[::1]"))
+            link = connect(cfg, tiny_model.blob if tiny_model else None, None if want.lower() == "auto" else want,
+                           cloud=(server, key) if remote and key else None)
         except Esp32Error as e:
             if not args.mock:
                 raise SystemExit(f"[main] ESP32 not reachable: {e}\n"
@@ -242,7 +256,11 @@ def main():
                "alive": bool(edge.ready), "resets": getattr(link, "resets", 0), "failures": edge.failures,
                "ms": round(edge.ewma_ms, 1), "compute_ms": round(edge.last_esp_ms, 1),
                "img": getattr(tiny_model, "size", None), "params": getattr(tiny_model, "params", None)}
-        st = {"t": time.time(), "mock": args.mock, "policy": getattr(pipe.policy, "name", "?"), "esp32": esp,
+        if hasattr(hw, "live_status"):
+            esp["live"] = hw.live_status()     # sensors, belt, arm, uptime, free memory, straight from the board
+        st = {"t": time.time(), "mock": args.mock, "manual": args.manual,
+              "belt_running": bool(getattr(hw, "_running", False)),
+              "policy": getattr(pipe.policy, "name", "?"), "esp32": esp,
               "gw_ms": round(gw.ewma_ms, 1), "edge_ms": round(edge.ewma_ms, 1), "nodes": 3,
               "policy_key": state["policy"], "scenario": scenario["name"], "gw_stress": state["gw_stress"],
               "belt_duty": round(hw.duty, 3), "belt_mps": round(hw.belt_speed_mps(), 3),
@@ -269,7 +287,33 @@ def main():
                     st["qmaps"] = ag.maps(space, getattr(pipe.policy, "last_state", None))
         return st
 
+    # manual-test buttons on the dashboard carry a number that goes up with every press. The first numbers the
+    # gateway sees are only remembered: a press from before this run must not fire the arm or start the belt.
+    manual_seen = {}
+
+    def manual_button(ctl: dict, key: str) -> bool:
+        v = ctl.get(key)
+        if v is None:
+            return False
+        first = key not in manual_seen
+        pressed = not first and v != manual_seen[key]
+        manual_seen[key] = v
+        return pressed
+
     def on_control(ctl: dict):
+        if manual_button(ctl, "belt_n"):
+            if ctl.get("belt_on"):
+                hw.start_belt()
+                print("[control] belt motor ON")
+            else:
+                hw.stop_belt()
+                print("[control] belt motor OFF")
+        if manual_button(ctl, "arm_test"):
+            hw.push()
+            print("[control] reject arm pushed (test button)")
+        if manual_button(ctl, "check_now"):
+            print("[control] check a box now (test button): photo + decision, as if IR sensor 1 fired")
+            threading.Thread(target=pipe.check_now, daemon=True, name="check-now").start()
         sc = ctl.get("scenario")
         if sc and sc != scenario["name"]:
             if netemu is not None:
@@ -335,13 +379,21 @@ def main():
     pipe.reporter = Reporter(server, status, on_control=on_control, api_key=key, device=device,
                              qtable_fn=qtable_bytes if up_every > 0 else None, qtable_every_s=max(5.0, up_every))
     hw.bind(pipe.on_box_at_camera, pipe.on_box_at_arm)
+    hw.on_change = pipe.reporter.nudge     # a sensor or the arm changed: the dashboard hears it at once
     with open(os.path.join(log_dir, "run_info.json"), "w") as f:
         json.dump({"policy": policy_name, "mock": args.mock, "esp32": esp_mode, "server": server,
                    "started": time.strftime("%Y-%m-%d %H:%M:%S"),
                    "scenario": scenario["name"], "config": cfg}, f, indent=2, default=str)
 
-    hw.start_belt(args.belt)
-    print("[main] belt running - Ctrl+C to stop")
+    if args.manual:
+        if args.belt is not None:
+            hw.duty = max(0.0, min(1.0, float(args.belt)))
+        pipe.min_transit = float(cfg["conveyor"].get("manual_window_s", 3.0))
+        print(f"[main] MANUAL TEST: belt motor off. For each box: hold it under the camera so it passes IR sensor 1, "
+              f"then move it past IR sensor 2 within about {pipe.min_transit:.0f} s. Ctrl+C to stop")
+    else:
+        hw.start_belt(args.belt)
+        print("[main] belt running - Ctrl+C to stop")
     t_start = time.time()
     last_n = -1
     # the launcher's "please stop" (Windows can only kill a program, and a killed gateway cannot switch the

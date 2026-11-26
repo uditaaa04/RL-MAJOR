@@ -188,6 +188,34 @@ class Esp32Link:
             with self._plock:
                 self._pending.pop(rid, None)
 
+    @property
+    def version(self) -> int:
+        """Firmware version from the hello line 'H SCQC-ESP32 <version> ...' (0 = unknown)."""
+        try:
+            return int(self.firmware.split()[2])
+        except (IndexError, ValueError):
+            return 0
+
+    def set_cloud(self, url: str, key: str) -> bool:
+        """Firmware 4 and later: give the board the cloud address and API key, so it can send its own readings
+        to the dashboard over Wi-Fi. The board stores them and writes its memory only when they change."""
+        if self.version < 4:
+            return False
+        self.request(f"U {url.rstrip('/') if url else '-'}", "OK", 1.0)
+        self.request(f"Y {key or '-'}", "OK", 1.0)
+        return True
+
+    def wifi_status(self) -> dict | None:
+        """Firmware 4 and later: the board's Wi-Fi (state, address, signal, setup hotspot, cloud reachable)."""
+        if self.version < 4:
+            return None
+        try:
+            p = self.request("N", "N ", 0.5).split(" ", 6)
+            return {"state": p[1], "ip": None if p[2] == "-" else p[2], "rssi": int(p[3]), "hotspot": p[4] == "1",
+                    "cloud_ok": p[5] == "ok", "ssid": None if len(p) < 7 or p[6] == "-" else p[6]}
+        except (Esp32Error, IndexError, ValueError):
+            return None
+
     def set_duty(self, duty: int):
         self.duty = max(0, min(255, int(duty)))
         try:
@@ -282,6 +310,9 @@ class Esp32Link:
             if slot is not None:
                 slot[1] = parts[2:]
                 slot[0].set()
+        elif line.startswith("# "):                 # Wi-Fi news from the board (firmware 4)
+            if self.verbose:
+                print(f"[esp32] {line[2:]}")
         elif line.startswith("BOOT SCQC-ESP32"):
             self.model_loaded = False
             if self.connected:                      # a reset in the middle of a run (power dip, button)
@@ -312,8 +343,10 @@ class Esp32Link:
                 print(f"[esp32] could not set the board up again: {e}")
 
 
-def connect(cfg: dict, model_blob: bytes | None, port: str | None = None, verbose: bool = True) -> Esp32Link:
-    """Find the board (port 'auto' tries every USB serial port), set it up and load the tiny model."""
+def connect(cfg: dict, model_blob: bytes | None, port: str | None = None, verbose: bool = True,
+            cloud: tuple[str, str] | None = None) -> Esp32Link:
+    """Find the board (port 'auto' tries every USB serial port), set it up and load the tiny model.
+    cloud = (address, API key): handed to the board (firmware 4+) so it can reach the dashboard over Wi-Fi."""
     e = cfg.get("esp32", {})
     want = port or str(e.get("port", "auto"))
     baud = int(e.get("baud", 460800))
@@ -338,6 +371,12 @@ def connect(cfg: dict, model_blob: bytes | None, port: str | None = None, verbos
                 # the belt, the sensors and the arm do not need the tiny model: carry on without it
                 print(f"[esp32] WARNING: {ex}. The belt, sensors and arm still work; no photo will be checked on "
                       f"the ESP32 in this run. Unplug the board, plug it in again and restart to retry.")
+        if cloud and cloud[0] and cloud[1]:
+            try:
+                if link.set_cloud(cloud[0], cloud[1]) and verbose:
+                    print(f"[esp32] cloud address and API key handed to the board (for its Wi-Fi): {cloud[0]}")
+            except Esp32Error as ex:
+                print(f"[esp32] could not hand the cloud address to the board: {ex} (USB still works)")
         if verbose:
             print(f"[esp32] connected on {p}: {link.firmware}" + ("  (tiny model loaded)" if link.model_loaded else ""))
         return link
@@ -355,9 +394,17 @@ class Esp32Hardware:
         self.hold_ms = int(cfg.get("esp32", {}).get("servo_hold_ms", 350))
         self.truth = None                  # real boxes: ground truth comes from an experiment sequence file
         self.on_cam = self.on_arm = None
+        self.on_change = None              # fn(): something the dashboard should show at once (set by main)
         self._running = False
+        # live readings for the dashboard: the board is asked for its sensors every 0.3 s ("S" command)
+        self.live = None                   # {"ir_camera", "ir_arm", "duty", "free_bytes", "uptime_ms", "t"}
+        self.counts = {"ir_camera": 0, "ir_arm": 0, "pushes": 0}
+        self.last_event = None             # ("C" or "A", time.time())
+        self.wifi = None                   # the board's own Wi-Fi (firmware 4+), asked every 3 s
+        self._closed = False
         link.on_event = self._event
         link.on_reset = self._resend
+        threading.Thread(target=self._poll_live, daemon=True, name="esp32-live").start()
 
     def bind(self, on_box_at_camera, on_box_at_arm):
         self.on_cam, self.on_arm = on_box_at_camera, on_box_at_arm
@@ -366,9 +413,51 @@ class Esp32Hardware:
         # each event gets its own short thread: taking the photo must never delay the arm
         if tag != "C" and not self.arm_sensor:
             return                         # nothing is wired to the arm-sensor pin: ignore whatever it reports
+        self.counts["ir_camera" if tag == "C" else "ir_arm"] += 1
+        self.last_event = (tag, time.time())
         fn = self.on_cam if tag == "C" else self.on_arm
         if fn is not None:
             threading.Thread(target=fn, daemon=True, name=f"ir-{tag}").start()
+        self._changed()
+
+    def _changed(self):
+        if self.on_change is not None:
+            try:
+                self.on_change()
+            except Exception:
+                pass
+
+    def _poll_live(self):
+        """Sensor states, belt speed, free memory and uptime from the board, about 3 times a second
+        (and its Wi-Fi every 3 s)."""
+        n = 0
+        while not self._closed:
+            time.sleep(0.3)
+            if self._closed or not self.link.alive:
+                continue
+            n += 1
+            if n % 10 == 1:
+                self.wifi = self.link.wifi_status()
+            st = self.link.status()
+            if st is None:
+                continue
+            st["t"] = time.time()
+            old = self.live
+            self.live = st
+            if old is None or (old["ir_camera"], old["ir_arm"]) != (st["ir_camera"], st["ir_arm"]):
+                self._changed()            # a sensor went on or off: show it now, not at the next second
+
+    def live_status(self) -> dict:
+        """What the dashboard's ESP32 panel shows."""
+        lv = self.live or {}
+        age = round(time.time() - lv["t"], 2) if lv.get("t") else None
+        ev = None
+        if self.last_event is not None:
+            ev = {"tag": self.last_event[0], "age_s": round(time.time() - self.last_event[1], 1)}
+        return {"ir_camera": lv.get("ir_camera"), "ir_arm": lv.get("ir_arm"), "duty": lv.get("duty"),
+                "free_bytes": lv.get("free_bytes"), "uptime_s": round(lv["uptime_ms"] / 1000) if lv.get("uptime_ms") else None,
+                "reading_age_s": age, "belt_on": self._running, "counts": dict(self.counts), "last_event": ev,
+                "firmware": self.link.firmware, "arm_sensor": self.arm_sensor, "wifi": self.wifi}
 
     def _resend(self):
         if self._running:
@@ -381,7 +470,10 @@ class Esp32Hardware:
         self.link.set_duty(round(self.duty * 255))
 
     def set_belt(self, duty: float):
-        self.start_belt(duty)
+        """New belt speed. A stopped belt (manual tests) stays stopped until start_belt()."""
+        self.duty = max(0.0, min(1.0, float(duty)))
+        if self._running:
+            self.link.set_duty(round(self.duty * 255))
 
     def stop_belt(self):
         self._running = False
@@ -392,6 +484,8 @@ class Esp32Hardware:
 
     def push(self):
         self.link.push(self.hold_ms)
+        self.counts["pushes"] += 1
+        self._changed()
 
     def show(self, verdict: str):
         """The belt has no good / damaged lamps (firmware version 2): the dashboard shows every verdict."""
@@ -400,6 +494,7 @@ class Esp32Hardware:
         return None
 
     def close(self):
+        self._closed = True
         try:
             self.stop_belt()
         except Exception:

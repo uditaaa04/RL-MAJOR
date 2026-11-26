@@ -2,8 +2,10 @@
 One-click launcher - nothing to type. Used by the *.bat files in the project folder.
 
     START_DEMO.bat                  -> python tools/go.py demo      (no hardware: pretend belt, this PC is also the cloud)
-    START_REAL_LINE.bat             -> python tools/go.py line      (REAL belt: ESP32 on USB + webcam; cloud = AWS if set up, else this PC)
-    START_DEMO_ON_AWS.bat           -> python tools/go.py aws       (pretend belt against the real AWS server)
+    START_REAL_LINE.bat             -> python tools/go.py line      (REAL belt: ESP32 on USB + webcam; cloud = Render/AWS if set up, else this PC)
+    MANUAL_TEST.bat                 -> python tools/go.py manual    (REAL ESP32, sensors, arm, webcam; belt off, boxes moved by hand)
+    FLASH_ESP32.bat                 -> python tools/go.py flash     (puts firmware 4 on the ESP32: no Arduino IDE clicking)
+    START_DEMO_ON_AWS.bat           -> python tools/go.py aws       (pretend belt against the real cloud server: Render or AWS)
     CHECK_ESP32.bat                 -> python tools/go.py esp32     (finds the board, tests arm, sensors, tiny model)
     CHECK_CAMERA.bat                -> python tools/go.py camera    (one picture from every camera: which one the line uses, crop square)
     FIRST_HARDWARE_TEST.bat         -> python tools/go.py first     (all of it in one window: packages, board, sensors, camera, real line, measurement)
@@ -14,7 +16,8 @@ One-click launcher - nothing to type. Used by the *.bat files in the project fol
     REMOTE_CONTROL.bat              -> python tools/go.py remote    (stays open; Claude starts/stops the steps)
     CHECK_EVERYTHING.bat            -> python tools/go.py test      (the automatic tests)
 
-The three nodes:  ESP32 (edge, on the belt)  <-USB->  this laptop (gateway)  <-Internet->  AWS (cloud)
+The three nodes:  ESP32 (edge, on the belt)  <-USB->  this laptop (gateway)  <-Internet->  cloud server (Render)
+                  ... and the ESP32 also sends its own sensor readings to the cloud over its Wi-Fi (firmware 4)
 
 What it does by itself:
   * builds a private Python environment for this PC the first time (outside OneDrive, so nothing syncs),
@@ -541,9 +544,10 @@ def mode_camera():
         stop("the camera check did not get a picture from the camera the real line uses (see above)")
 
 
-def mode_line():
+def mode_line(manual=False):
     """THE REAL LINE: ESP32 on USB runs the belt, this laptop is the gateway (webcam + agent), the cloud is the
-    AWS server if it was set up (START_DEMO_ON_AWS once), otherwise a server on this PC."""
+    cloud server if it was set up (Render or AWS, cloud/.secrets/aws_server.json), otherwise a server on this PC.
+    manual=True (MANUAL_TEST): the belt motor stays off and every box is moved by hand past the two sensors."""
     ensure_env()
     ensure_cv2()
     ensure_ready()
@@ -565,8 +569,8 @@ def mode_line():
         env = {"CONVEYOR_API_KEY": "", "CONVEYOR_SERVER": "", "CONVEYOR_WHERE": "this PC"}
         say("Cloud node: no cloud server is set up yet, so the big model runs on THIS PC for now.")
         base, key = start_local_server(procs, env), ""
-    say("Starting the gateway: ESP32 on USB + webcam ...")
-    gw = spawn("gateway", ["-m", "gateway_node.main", "--server", base], env)
+    say("Starting the gateway: ESP32 on USB + webcam ..." + ("  (MANUAL TEST: belt motor off)" if manual else ""))
+    gw = spawn("gateway", ["-m", "gateway_node.main", "--server", base] + (["--manual"] if manual else []), env)
     procs.append(gw)
     time.sleep(8)
     if gw.poll() is not None:
@@ -578,8 +582,29 @@ def mode_line():
              "the Arduino Serial Monitor is still open, or the webcam is used by another program. "
              "Double-click CHECK_ESP32.bat to test the board alone, CHECK_CAMERA.bat to test the camera alone.")
     webbrowser.open(f"{base}/?key={key}" if key else f"http://localhost:{PORT}")
-    say("The belt is running. Put boxes on it.")
+    if manual:
+        say("MANUAL TEST. For every box:")
+        say("  1. hold it under the camera so that it passes IR sensor 1  (photo + decision happen now)")
+        say("  2. move it past IR sensor 2 within about 3 seconds          (a damaged box makes the arm push)")
+        say("Everything shows up live on the dashboard. The dashboard buttons 'Push the arm', 'Belt on' and")
+        say("'Check a box now' work too. The agent's learned table is NOT changed by hand tests.")
+    else:
+        say("The belt is running. Put boxes on it.")
     hold(base, procs, key)
+
+
+def mode_manual():
+    mode_line(manual=True)
+
+
+def mode_flash():
+    """Puts firmware 4 (Wi-Fi) on the ESP32 with the arduino-cli inside Arduino IDE 2."""
+    ensure_env()
+    code = run([PY, "-m", "tools.flash_esp32"])
+    if code != 0:
+        stop("the ESP32 was not flashed (the reason is above)")
+    say("")
+    say("Done. Next: double-click MANUAL_TEST.bat (hand test) or START_REAL_LINE.bat (belt).")
 
 
 def mode_esp32():
@@ -1005,9 +1030,9 @@ def _free_port(port):
             subprocess.call(["taskkill", "/PID", pid, "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-REMOTE_JOBS = {"demo", "line", "public", "retrain", "benchmark", "test", "tradeoff", "esp32", "scores", "rebuild",
-               "cloudpc", "pibundle"}       # the last two: old names, see MODES at the bottom
-RUNNERS = ("demo", "line", "cloudpc")       # these hold port 8000 and the ESP32
+REMOTE_JOBS = {"demo", "line", "manual", "flash", "aws", "public", "retrain", "benchmark", "test", "tradeoff", "esp32",
+               "scores", "rebuild", "cloudpc", "pibundle"}       # the last two: old names, see MODES at the bottom
+RUNNERS = ("demo", "line", "manual", "flash", "aws", "cloudpc")   # these hold port 8000 or the ESP32's USB port
 
 
 def mode_remote():
@@ -1153,7 +1178,7 @@ def mode_job():
 JOB_STEPS = ("tradeoff", "scores", "shift", "rebuild", "public", "benchmark", "test", "esp32", "packtiny",
              "setup", "boardtest")
 
-MODES = {"first": mode_first, "setup": mode_setup, "boardtest": mode_boardtest, "camera": mode_camera, "scores": mode_scores, "shift": mode_shift, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
+MODES = {"first": mode_first, "setup": mode_setup, "boardtest": mode_boardtest, "camera": mode_camera, "scores": mode_scores, "shift": mode_shift, "rebuild": mode_rebuild, "job": mode_job, "demo": mode_demo, "line": mode_line, "manual": mode_manual, "flash": mode_flash, "aws": mode_aws, "esp32": mode_esp32, "tradeoff": mode_tradeoff,
          "test": mode_test, "retrain": mode_retrain, "public": mode_public, "benchmark": mode_benchmark,
          "remote": mode_remote,
          # names from the 2-node version, kept so a REMOTE_CONTROL window opened before the update still works:

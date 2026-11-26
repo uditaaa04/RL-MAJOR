@@ -22,3 +22,5 @@ services:
         value: "1"
       - key: CONVEYOR_WHERE
         value: Render Singapore
+      - key: CONVEYOR_HTTP_THREADS         # dashboards and the gateway wait on the server (long polling)
+        value: "16"
