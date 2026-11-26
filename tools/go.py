@@ -130,6 +130,24 @@ def server_up(base):
         return False
 
 
+def wake_cloud(base):
+    """A free cloud server (Render) goes to sleep after 15 minutes without requests and needs up to a minute
+    to wake up. Wait for it here instead of giving up after the first short try."""
+    if server_up(base):
+        return True
+    say(f"Waking the cloud server {base} (a sleeping free server needs up to a minute) ...")
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        try:
+            if get_json(base + "/health", timeout=30).get("ok"):
+                say("  the cloud server is awake.")
+                return True
+        except Exception:
+            pass
+        time.sleep(3)
+    return False
+
+
 def my_ips():
     ips = set()
     try:
@@ -538,13 +556,14 @@ def mode_line():
     if c:
         env = {"CONVEYOR_API_KEY": c.get("key", ""), "CONVEYOR_SERVER": c["url"]}
         base, key = c["url"], c.get("key", "")
-        say(f"Cloud node: AWS server {base}")
-        if not server_up(base):
-            stop(f"the AWS server {base} does not answer. Is the EC2 instance running? "
-                 f"(To use this PC as the cloud instead, delete cloud/.secrets/aws_server.json.)")
+        say(f"Cloud node: cloud server {base}")
+        if not wake_cloud(base):
+            stop(f"the cloud server {base} does not answer. Is it running (Render: service not suspended; "
+                 f"AWS: EC2 instance started)? (To use this PC as the cloud instead, delete "
+                 f"cloud/.secrets/aws_server.json.)")
     else:
         env = {"CONVEYOR_API_KEY": "", "CONVEYOR_SERVER": "", "CONVEYOR_WHERE": "this PC"}
-        say("Cloud node: no AWS server is set up yet, so the big model runs on THIS PC for now.")
+        say("Cloud node: no cloud server is set up yet, so the big model runs on THIS PC for now.")
         base, key = start_local_server(procs, env), ""
     say("Starting the gateway: ESP32 on USB + webcam ...")
     gw = spawn("gateway", ["-m", "gateway_node.main", "--server", base], env)
@@ -665,14 +684,14 @@ def mode_tradeoff():
     ensure_ready(must_tiny=True)
     procs = []
     c = aws_config()
-    if c and server_up(c["url"]):
+    if c and wake_cloud(c["url"]):
         env = dict(os.environ, CONVEYOR_API_KEY=c.get("key", ""), CONVEYOR_SERVER=c["url"])
         server = c["url"]
-        say(f"Cloud node for this measurement: AWS server {server}")
+        say(f"Cloud node for this measurement: cloud server {server}")
     else:
         env = dict(os.environ, CONVEYOR_API_KEY="", CONVEYOR_SERVER="")
         server = start_local_server(procs, {"CONVEYOR_API_KEY": "", "CONVEYOR_SERVER": "", "CONVEYOR_WHERE": "this PC"}, reset=False)
-        say("Cloud node for this measurement: a server on THIS PC (no AWS server is set up yet).")
+        say("Cloud node for this measurement: a server on THIS PC (no cloud server is set up yet).")
     busy = False
     try:
         st = get_json(server + "/api/state", (c or {}).get("key", "") if c else "")
@@ -712,22 +731,23 @@ def mode_aws():
     if os.path.exists(cf):
         c = json.load(open(cf))
     else:
-        say("One-time set-up. Paste the two values printed at the end of the AWS deployment.")
-        url = input("  Cloud server address (http://<ip>:8000): ").strip().rstrip("/")
+        say("One-time set-up. Paste the cloud server address and its API key.")
+        url = input("  Cloud server address (https://<name>.onrender.com or http://<ip>:8000): ").strip().rstrip("/")
         key = input("  API key: ").strip()
         if not url.startswith("http"):
-            stop("the address must start with http://")
+            stop("the address must start with http:// or https://")
         c = {"url": url, "key": key}
         with open(cf, "w") as f:
             json.dump(c, f)
     env = {"CONVEYOR_API_KEY": c["key"], "CONVEYOR_SERVER": c["url"]}
+    wake_cloud(c["url"])
     say(f"Checking {c['url']} ...")
     e = dict(os.environ)
     e.update(env)
     if run([PY, "-m", "tools.check_server", "--server", c["url"]], env=e) != 0:
-        stop("the AWS server did not pass the check (is the EC2 instance running? is the key right? "
+        stop("the cloud server did not pass the check (is it running? is the key right? "
              f"delete {os.path.relpath(cf, ROOT)} to enter the values again)")
-    say("Starting the gateway with the pretend belt against AWS ...")
+    say("Starting the gateway with the pretend belt against the cloud server ...")
     pretend_feed(env)
     pi = spawn("gateway", ["-m", "gateway_node.main", "--mock", "--esp32", "auto", "--server", c["url"]], env)
     time.sleep(3)
