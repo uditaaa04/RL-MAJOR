@@ -1,5 +1,5 @@
 """
-Cloud inference server + live dashboard.  This is the CLOUD node. Runs on AWS EC2 (or on the gateway laptop itself for a local demo).
+Cloud inference server + live dashboard.  This is the CLOUD node. Runs on AWS EC2 or Render (or on the gateway laptop itself for a local demo).
 
     python -m server.app            (then open http://<server>:8000 in a browser)
 
@@ -287,7 +287,9 @@ def create_app(cfg: dict, model=None, data_dir: str | None = None, api_key: str 
 def load_model(cfg: dict, cpu_only: bool = False):
     path = project_path(cfg["models"]["cloud_onnx"])
     prov = ["CPUExecutionProvider"] if cpu_only else None
-    model = OnnxInspector(path, threads=0, providers=prov)
+    # CONVEYOR_ONNX_THREADS: 0 = use every core (EC2, laptop); 1 on small shared hosts such as Render Free (0.1 CPU),
+    # where many threads only fight over the tiny CPU share and make every answer slower
+    model = OnnxInspector(path, threads=int(os.environ.get("CONVEYOR_ONNX_THREADS") or 0), providers=prov)
     model.name = os.path.basename(path)
     from PIL import Image
     for _ in range(3):                                   # warm-up: the first ONNX runs are slow
@@ -307,7 +309,7 @@ def main():
     app = create_app(cfg, model)
     ext = app.extensions["conveyor"]
     host = a.host or cfg["server"]["host"]
-    port = a.port or int(os.environ.get("CONVEYOR_PORT") or cfg["server"]["port"])
+    port = a.port or int(os.environ.get("CONVEYOR_PORT") or os.environ.get("PORT") or cfg["server"]["port"])  # PORT: set by Render
     print(f"[server] big model {ext['S']['info']}  ->  dashboard: http://localhost:{port}")
     if ext["auth"]:
         print("[server] API key required (X-API-Key)")

@@ -1,0 +1,24 @@
+# Render Blueprint - the CLOUD node of Smart Conveyor QC on Render's free web service.
+# Render dashboard -> New -> Blueprint -> pick this repository -> Apply.
+# Render builds it, generates a random API key (CONVEYOR_API_KEY) and gives an https://<name>.onrender.com address.
+# Guide: docs/CLOUD_RENDER.md
+services:
+  - type: web
+    name: smart-conveyor-cloud
+    runtime: python
+    plan: free
+    region: singapore                      # closest Render region to India
+    branch: claude/smart-conveyor-project
+    buildCommand: pip install -r cloud/requirements-render.txt
+    startCommand: python -m server.app --cpu-only
+    healthCheckPath: /health
+    autoDeploy: true                       # every push to the branch redeploys
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: CONVEYOR_API_KEY              # every API call needs header X-API-Key: <this value>
+        generateValue: true
+      - key: CONVEYOR_ONNX_THREADS         # the free plan has 0.1 CPU: one thread is fastest
+        value: "1"
+      - key: CONVEYOR_WHERE
+        value: Render Singapore
