@@ -92,6 +92,39 @@ def pick_port(want: str | None) -> str | None:
     return None
 
 
+def find_elf() -> str | None:
+    """The program just built (kept by --export-binaries in esp32_node/build), for decoding crash reports."""
+    found = glob.glob(os.path.join(SKETCH, "build", "**", "*.elf"), recursive=True)
+    return max(found, key=os.path.getmtime) if found else None
+
+
+def find_addr2line() -> str | None:
+    """The ESP32 toolchain's address decoder, installed with the ESP32 boards in Arduino IDE."""
+    roots = [os.path.join(os.environ.get("LOCALAPPDATA", ""), "Arduino15"), os.path.expanduser("~/.arduino15"),
+             os.path.expanduser("~/Library/Arduino15")]
+    for r in roots:
+        hits = glob.glob(os.path.join(r, "packages", "esp32", "tools", "**", "xtensa-esp32-elf-addr2line*"),
+                         recursive=True)
+        if hits:
+            return sorted(hits)[-1]
+    return None
+
+
+def decode_backtrace(line: str) -> list[str]:
+    """'Backtrace: 0x401907dc:0x3ffdcfd0 ...' -> 'function at file:line' for each address (like Arduino's
+    exception decoder). Empty when the decoder or the program file is not found."""
+    import re
+    addrs = re.findall(r"(0x4[0-9a-fA-F]{7}):0x", line)
+    elf, a2l = find_elf(), find_addr2line()
+    if not addrs or not elf or not a2l:
+        return []
+    try:
+        r = subprocess.run([a2l, "-pfiaC", "-e", elf] + addrs, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+
 def listen(port: str, seconds: float = 25.0) -> bool:
     """After the upload: ask the board who it is, then show its Wi-Fi news for a while."""
     import serial
@@ -127,7 +160,10 @@ def listen(port: str, seconds: float = 25.0) -> bool:
                     boots += 1
                     print(f"  board started ({line})", flush=True)
                 elif any(w in line for w in crash_words):
-                    print("  !! " + line[:160], flush=True)
+                    print("  !! " + line[:200], flush=True)
+                    if "Backtrace" in line:
+                        for d in decode_backtrace(line):
+                            print("     at " + d[:220], flush=True)
     finally:
         s.close()
     if boots > 1:
@@ -160,7 +196,7 @@ def main(argv=None) -> int:
     port = None if a.check else pick_port(a.port)
     if not a.check and not port:
         return 2
-    cmd = [cli, "compile", "--fqbn", FQBN, SKETCH]
+    cmd = [cli, "compile", "--fqbn", FQBN, "--export-binaries", SKETCH]   # also keeps a copy in esp32_node/build
     if port:
         cmd[2:2] = ["--upload", "-p", port]
     code, out = run(cmd)
