@@ -36,6 +36,10 @@ ESP32 (Wi-Fi)       -> https POST /api/edge every 2 s and at once on a sensor ch
 | box photo checked in the cloud (`/infer`, round trip) | 83 ms | 97 ms |
 | of that, the model on the server | 5.2 ms | 19 ms |
 
+First live test of the instant path (same day, from the laptop, one try each): an ESP32-style reading posted to
+`/api/edge` lit the dashboard's ESP32 panel in 84 ms, and a dashboard button reached the waiting gateway in 104 ms.
+Not yet with the real board or belt.
+
 The same test photo gave the same answer as on the laptop (good, 0.0026): the same model. Requests without the
 key, or with a wrong one, get 401.
 
