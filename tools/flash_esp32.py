@@ -41,14 +41,15 @@ def find_cli() -> str | None:
     return shutil.which("arduino-cli")
 
 
-def run(cmd: list[str], timeout: float = 900) -> tuple[int, str]:
+def run(cmd: list[str], timeout: float = 900, echo: bool = True) -> tuple[int, str]:
     print("> " + " ".join(f'"{c}"' if " " in c else c for c in cmd), flush=True)
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
     out = []
     t0 = time.time()
     for line in p.stdout:
         out.append(line)
-        print("  " + line.rstrip(), flush=True)
+        if echo:
+            print("  " + line.rstrip(), flush=True)
         if time.time() - t0 > timeout:
             p.kill()
             break
@@ -56,8 +57,9 @@ def run(cmd: list[str], timeout: float = 900) -> tuple[int, str]:
 
 
 def esp32_core(cli: str) -> str | None:
-    code, out = run([cli, "core", "list", "--format", "json"], 120)
+    code, out = run([cli, "core", "list", "--format", "json"], 120, echo=False)   # long JSON: not printed
     if code != 0:
+        print(out[-2000:], flush=True)
         return None
     data = None
     for start in [0] + [i for i in (out.find("{"), out.find("[")) if i > 0]:
