@@ -257,6 +257,9 @@ static void pollIR() {
 #define MODEL_MAX  65536
 
 static uint8_t *g_blob = NULL;
+static uint8_t *g_res = NULL;                 // model memory set aside at start-up (see cmdModel)
+static size_t g_res_cap = 0;
+#define MODEL_RESERVE 49152                    // 48 kB: the 48x48 model is 46,852 bytes
 static bool g_model_ok = false;
 static uint8_t g_in_size = 0, g_in_ch = 1, g_nconv = 0;
 static float g_mean = 0.5f, g_std = 0.25f;
@@ -412,22 +415,29 @@ static void skipBytes(long n, uint32_t quiet_ms) {
 #define fwAlloc(n) malloc(n)
 #endif
 
+// The model's memory is set aside at start-up (g_res), before Wi-Fi and https break the memory into small
+// pieces: later, one free block of 47 kB is often not there any more ("W ERR memory" on the real board).
+static void dropBlob(uint8_t *b) {
+  if (b && b != g_res) free(b);
+}
+
 static void cmdModel(long n, long want_sum) {
   if (n < 20 || n > MODEL_MAX) { skipBytes(n, 200); Serial.println("W ERR size"); return; }
   if (!g_act_a || !g_act_b) { skipBytes(n, 200); Serial.println("W ERR memory"); return; }   // no work memory at start-up
-  uint8_t *blob = (uint8_t *)fwAlloc((size_t)n);
-  if (!blob && g_blob) {                    // no room for the old and the new model together: the old one goes first
-    free(g_blob);
+  bool fits_res = g_res && (size_t)n <= g_res_cap;
+  uint8_t *blob = (fits_res && g_blob != g_res) ? g_res : (uint8_t *)fwAlloc((size_t)n);
+  if (!blob && g_blob && (fits_res || g_blob != g_res)) {   // no room for the old and the new together: the old goes
+    dropBlob(g_blob);
     g_blob = NULL;
     g_model_ok = false;
-    blob = (uint8_t *)fwAlloc((size_t)n);
+    blob = fits_res ? g_res : (uint8_t *)fwAlloc((size_t)n);
   }
   if (!blob) { skipBytes(n, 200); Serial.println("W ERR memory"); return; }
-  if (!readBytesExact(blob, (size_t)n, 1500)) { free(blob); Serial.println("W ERR timeout"); return; }
-  if ((long)sum16(blob, (size_t)n) != want_sum) { free(blob); Serial.println("W ERR checksum"); return; }
+  if (!readBytesExact(blob, (size_t)n, 1500)) { dropBlob(blob); Serial.println("W ERR timeout"); return; }
+  if ((long)sum16(blob, (size_t)n) != want_sum) { dropBlob(blob); Serial.println("W ERR checksum"); return; }
   const char *err = modelParse(blob, (size_t)n);   // changes nothing if the file is refused
-  if (err) { free(blob); Serial.print("W ERR "); Serial.println(err); return; }
-  if (g_blob) free(g_blob);
+  if (err) { dropBlob(blob); Serial.print("W ERR "); Serial.println(err); return; }
+  if (g_blob && g_blob != blob) dropBlob(g_blob);
   g_blob = blob;                            // the layer pointers now point into this block
   g_model_ok = true;
   Serial.print("W OK ");
@@ -1063,6 +1073,8 @@ void setup() {
   servoWrite(g_servo_rest);
   g_act_a = (float *)malloc(sizeof(float) * ACT_MAX);
   g_act_b = (float *)malloc(sizeof(float) * ACT_MAX);
+  g_res = (uint8_t *)malloc(MODEL_RESERVE);  // before Wi-Fi starts, while one big free block still exists
+  g_res_cap = g_res ? MODEL_RESERVE : 0;
   // a box already in front of a sensor at power-up is not a new box
   for (int i = 0; i < 2; i++) g_ir[i].busy = irSees(g_ir[i]);
   delay(50);

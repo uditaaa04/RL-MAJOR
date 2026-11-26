@@ -258,21 +258,26 @@ def test_new_model_replaces_the_old_one_when_memory_is_short(board):
         rest = arm_moves(board)
         a, b = tiny.TinyModel(make_model(seed=1)), tiny.TinyModel(make_model(seed=2))
         px = bytes(range(256)) * 4
-        link.upload_model(a.blob)
-        board.nomem(1)                       # no room for two models at once: the old one must go first
+        link.upload_model(a.blob)            # goes into the memory set aside at start-up
+        board.nomem(5)                       # no free memory at all from now on
         time.sleep(0.1)
-        link.upload_model(b.blob)
+        link.upload_model(b.blob)            # the reserved block is used again: the old model goes first
         assert abs(link.infer(px, 1.0)["p"] - b.predict_pixels(px)) < 2e-4
-        board.nomem(2)                       # no room at all: refused, and the model's bytes are thrown away
-        time.sleep(0.1)
+        link.upload_model(a.blob)            # ... and again (the real board: Wi-Fi/https took the free memory)
+        assert abs(link.infer(px, 1.0)["p"] - a.predict_pixels(px)) < 2e-4
+        # a model bigger than the reserved 48 kB needs fresh memory: refused, and the loaded model keeps working
+        big = tiny.TinyModel(make_model(widths=(8, 16, 24, 40), seed=3))
+        assert 49152 < len(big.blob) <= 65536
         with pytest.raises(Esp32Error) as e:
-            link.upload_model(a.blob)
-        assert "memory" in str(e.value) and not link.model_loaded
+            link.upload_model(big.blob)
+        assert "memory" in str(e.value) and not link.model_loaded   # the gateway stays careful: no model it knows of
         st = link.status()
         assert st is not None and st["duty"] == 0 and arm_moves(board) == rest
-        assert "SCQC-ESP32 4 0" in link.request("H", "H SCQC-ESP32", 1.0)    # the board says: no model loaded
-        link.upload_model(a.blob)            # memory is back: works again
-        assert abs(link.infer(px, 1.0)["p"] - a.predict_pixels(px)) < 2e-4
+        assert "SCQC-ESP32 4 1" in link.request("H", "H SCQC-ESP32", 1.0)    # ... but the board kept its old model
+        board.nomem(0)                       # memory is back: the big model loads too
+        time.sleep(0.1)
+        link.upload_model(big.blob)
+        assert abs(link.infer(px, 1.0)["p"] - big.predict_pixels(px)) < 2e-4
     finally:
         link.close()
 
@@ -290,9 +295,9 @@ def test_a_refused_model_does_not_stop_the_line(board, capsys):
 
     esp32_link.Esp32Link = Pty
     try:
-        board.nomem(5)
+        board.nomem(5)                       # a model bigger than the reserved 48 kB, and no free memory
         time.sleep(0.1)
-        link = esp32_link.connect(cfg, tiny.TinyModel(make_model()).blob, "pty", verbose=False)
+        link = esp32_link.connect(cfg, tiny.TinyModel(make_model(widths=(8, 16, 24, 40))).blob, "pty", verbose=False)
     finally:
         esp32_link.Esp32Link = real
     try:
