@@ -390,7 +390,7 @@ def test_wifi_firmware_compiles_against_stubs(tmp_path):
         pytest.skip("needs g++")
     d = tmp_path / "esp32_node"
     d.mkdir()
-    for f in ("esp32_node.ino", "root_ca.h"):
+    for f in ("esp32_node.ino", "root_ca.h", "web_pages.h"):
         shutil.copy(os.path.join(ROOT, "esp32_node", f), d / f)
     cmd = ["g++", "-std=gnu++17", "-fsyntax-only", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
            "-I", os.path.join(ROOT, "tests", "esp32_host", "wifi_check"), "-x", "c++", str(d / "esp32_node.ino")]
