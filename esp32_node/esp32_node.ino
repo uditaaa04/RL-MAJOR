@@ -517,15 +517,18 @@ static const char *NET_NAMES[] = { "OFF", "CONNECTING", "ONLINE", "LOST" };
 static WebServer g_web(80);
 static DNSServer g_dns;
 static Preferences g_prefs;
-static WiFiClientSecure *g_tls = NULL;
+static WiFiClientSecure g_tls;           // ONE object for the board's whole life: HTTPClient keeps a pointer to it,
+                                         // so it is only ever stopped, never deleted (deleting it crashed the board)
+static bool g_tls_cfg = false;           // certificate check set on g_tls
 static HTTPClient g_http;
 static bool g_http_ready = false;        // begin() done and headers added: the next POSTs reuse the connection
 static String g_cloud_note = "";
 
 static void cloudReset() {               // new address / key / certificate setting, or repeated failures
-  if (g_http_ready) g_http.end();
+  g_http.end();
+  g_tls.stop();                          // closes the https session and frees its buffers
   g_http_ready = false;
-  if (g_tls) { delete g_tls; g_tls = NULL; }
+  g_tls_cfg = false;                     // set the certificate check again before the next connection
 }
 
 static NetState g_state = NET_OFF;
@@ -766,15 +769,15 @@ static void heartbeat() {
       g_hb_wait_until = now + 10000;
       return;
     }
-    if (g_tls == NULL) {
-      g_tls = new WiFiClientSecure();
-      if (g_insecure) g_tls->setInsecure();
-      else g_tls->setCACert(ROOT_CA);
+    if (!g_tls_cfg) {
+      if (g_insecure) g_tls.setInsecure();
+      else g_tls.setCACert(ROOT_CA);
+      g_tls_cfg = true;
     }
     g_http.setReuse(true);
     g_http.setConnectTimeout(6000);
     g_http.setTimeout(6000);
-    if (!g_http.begin(*g_tls, g_url + "/api/edge")) { setCloudNote("bad cloud address"); return; }
+    if (!g_http.begin(g_tls, g_url + "/api/edge")) { setCloudNote("bad cloud address"); return; }
     g_http.addHeader("Content-Type", "application/json");
     g_http.addHeader("X-API-Key", g_key);
     g_http.addHeader("X-Device-Id", "esp32-1");

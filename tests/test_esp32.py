@@ -423,3 +423,11 @@ def test_wifi_lock_sections_hold_only_plain_copies():
     for sec in sections:
         for word in banned:
             assert word not in sec, f"'{word}' inside NET_LOCK ... NET_UNLOCK:\n{sec.strip()[:300]}"
+
+
+def test_https_client_is_never_deleted():
+    """HTTPClient keeps a raw pointer to its WiFiClientSecure. Deleting that client on a reset left the pointer
+    dangling and the board crashed in HTTPClient::setTimeout -> connected() (LoadProhibited) on the next send."""
+    src = open(os.path.join(ROOT, "esp32_node", "esp32_node.ino")).read()
+    assert "static WiFiClientSecure g_tls;" in src
+    assert "new WiFiClientSecure" not in src and "delete g_tls" not in src
